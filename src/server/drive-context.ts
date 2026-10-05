@@ -70,12 +70,17 @@ export async function fetchDriveKnowledgeBaseContext(accessToken: string, driveF
     for (const file of [...folderFiles, ...broadFiles, ...targetedFiles.flat()]) {
       if (file.id && !fileMap.has(file.id)) fileMap.set(file.id, file.path ? file : { ...file, path: file.name });
     }
-    const eligibleFiles = Array.from(fileMap.values()).filter(file =>
-      file.mimeType === 'text/markdown' || file.mimeType === 'text/plain' || file.mimeType === 'text/csv' ||
-      file.mimeType?.includes('google-apps.document') || file.mimeType?.includes('google-apps.spreadsheet') || file.mimeType?.includes('google-apps.presentation') ||
-      file.name?.endsWith('.md') || file.name?.endsWith('.txt') || file.name?.endsWith('.csv') ||
-      /einarbeitung|onboarding|mitarbeiter|plan|september|welcome|joiner|schulung|training|squad|data|schwarz|dsv|vorbereitung|use\s*case|protokoll|transkript|transcript|meeting|notes|briefing|koenig|bauer|pk|lorenz|domcura|voest|alpine/i.test(file.name || '')
-    );
+    const eligibleFiles = Array.from(fileMap.values()).filter(file => {
+      const name = (file.name || '').toLowerCase();
+      const filePath = (file.path || '').toLowerCase();
+      if (/coaching|mentoring\s*j/i.test(name) || /coaching|mentoring\s*j/i.test(filePath)) return false;
+      return (
+        file.mimeType === 'text/markdown' || file.mimeType === 'text/plain' || file.mimeType === 'text/csv' ||
+        file.mimeType?.includes('google-apps.document') || file.mimeType?.includes('google-apps.spreadsheet') || file.mimeType?.includes('google-apps.presentation') ||
+        file.name?.endsWith('.md') || file.name?.endsWith('.txt') || file.name?.endsWith('.csv') ||
+        /einarbeitung|onboarding|mitarbeiter|plan|september|welcome|joiner|schulung|training|squad|data|schwarz|dsv|vorbereitung|use\s*case|protokoll|transkript|transcript|meeting|notes|briefing|koenig|bauer|pk|lorenz|domcura|voest|alpine/i.test(file.name || '')
+      );
+    });
     eligibleFiles.sort((a, b) => new Date(b.modifiedTime || 0).getTime() - new Date(a.modifiedTime || 0).getTime());
 
     let context = '';

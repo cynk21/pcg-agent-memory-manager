@@ -34,6 +34,7 @@ export async function fetchUpcomingEvents(auth: any, recordEvidence: RecordEvide
       const summary = event.summary || '(Kein Titel)';
       const desc = event.description ? ` | Details: ${event.description.replace(/\n+/g, ' ').slice(0, 300)}` : '';
       if (/thursdays?\s+(for|4)\s+data/i.test(summary) || /thursdays?\s+(for|4)\s+data/i.test(desc)) continue;
+      if (/coaching|mentoring\s*j/i.test(summary) || /coaching|mentoring\s*j/i.test(desc)) continue;
 
       const start = event.start?.dateTime || event.start?.date || '';
       const end = event.end?.dateTime || event.end?.date || '';

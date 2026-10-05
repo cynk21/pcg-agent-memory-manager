@@ -1016,6 +1016,7 @@ Jedes Element muss diese Form haben:
 Regeln:
 - Erzeuge nur dauerhaft nützliche Konzepte, maximal 20.
 - Trenne strikt: Projekte nach projects/, Kundenthemen nach customers/, Squad-/Teamthemen nach squad/, allgemeine Regeln nach general/.
+- Ignoriere private Coaching-/Mentoring-Themen (wie Coaching J.) komplett; erstelle dafür keine Konzepte in agent-memory.
 - Keine erledigten Aufgaben als offen darstellen. Google Tasks mit [ERLEDIGT] sind endgültig erledigt; [OFFEN] bleibt aktiv.
 - Keine neuen Aufgaben erfinden. Dokumentiere offene Aufgaben nur, wenn sie aus den Quellen stammen.
 - Bevorzuge aktuelle, wiederverwendbare Fakten gegenüber einem Tagesbericht.
@@ -1361,9 +1362,10 @@ export function sanitizeActionProposals(text: string, tasksContext?: string, eve
           continue;
         }
 
-        // 2. FILTER OUT IGNORED INTERNAL MEETINGS (Thursdays for Data)
-        if (/thursdays?\s+(for|4)\s+data/i.test(titleLower) || /thursdays?\s+(for|4)\s+data/i.test(notesLower)) {
-          console.log(`[Ignored Meeting Filter] Removed proposal for Thursdays for Data: "${p.title}"`);
+        // 2. FILTER OUT IGNORED INTERNAL MEETINGS & COACHING (Thursdays for Data, Coaching / Mentoring J.)
+        if (/thursdays?\s+(for|4)\s+data/i.test(titleLower) || /thursdays?\s+(for|4)\s+data/i.test(notesLower) ||
+            /coaching|mentoring\s*j|schwingdings/i.test(titleLower) || /coaching|mentoring\s*j|schwingdings/i.test(notesLower)) {
+          console.log(`[Ignored Meeting Filter] Removed proposal for ignored topic: "${p.title}"`);
           modified = true;
           continue;
         }
@@ -1496,9 +1498,10 @@ export function ensureMeetingProtocolTasks(summary: string, sourceContext: strin
   const actions: { title: string; notes: string }[] = [];
   const actionPattern = /(?:^|\n)\s*(?:[*•-]\s*)?\[Hardy(?:\s+Engwer)?\]\s*([^:\n]+):\s*([^\n]*(?:\n(?!\s*(?:[*•-]\s*)?\[(?:Hardy|David|Die Gruppe)\])[^\n]*)*)/gi;
   for (const match of sourceContext.matchAll(actionPattern)) {
-    const label = match[1].trim().replace(/\s+/g, ' ');
-    const notes = match[2].replace(/\s+/g, ' ').trim();
-    if (!label || !notes || /^(?:status|aktueller stand|zusammenfassung)$/i.test(label)) continue;
+  const label = match[1].trim().replace(/\s+/g, ' ');
+  const notes = match[2].replace(/\s+/g, ' ').trim();
+  if (!label || !notes || /^(?:status|aktueller stand|zusammenfassung)$/i.test(label)) continue;
+  if (/coaching|mentoring\s*j|schwingdings/i.test(label) || /coaching|mentoring\s*j|schwingdings/i.test(notes)) continue;
     const title = /jost/i.test(`${label} ${notes}`) && /angebot|status/i.test(`${label} ${notes}`)
       ? 'HHA: Jost nach dem Status des Angebots fragen'
       : label;
@@ -2209,8 +2212,8 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
    - Wenn heute Freitag ist (oder vor dem Wochenende): Blicke explizit vorausschauend auf MONTAG und die kommende Arbeitswoche!
    - Welche Termine stehen am Montag an? Welche Kunden-Vorbereitungen, Deadlines und To-Dos müssen für den Wochenstart bereits HEUTE im Blick behalten und vorbereitet werden?
 
-5. 🚫 INTERNE TERMINE SILENT IGNORIEREN (Thursdays for Data):
-   - "Thursdays for Data" ist ein interner PCG-Serientermin und MUSS IMMER KOMPLETT SILENT IGNORIERT WERDEN! Keine Erwähnung, keine To-Dos, keine Vorbereitung und NIEMALS ein Abschnitt "Ignorierte interne Termine".
+5. 🚫 INTERNE TERMINE & COACHING SILENT IGNORIEREN:
+   - "Thursdays for Data" sowie private Coaching-/Mentoring-Themen (inkl. Coaching J., Schwingdings) MÜSSEN IMMER KOMPLETT SILENT IGNORIERT WERDEN! Keine Erwähnung, keine To-Dos, keine Vorbereitung und NIEMALS ein Abschnitt "Ignorierte interne Termine".
 
 6. 🔒 MANDATORISCHE VORHERIGE AKTUALITÄTSPRÜFUNG & FILTERUNG ALTER THEMEN:
    - STRIKTE AKTUALITÄTS-REGEL: Überprüfe JEDES Thema, Projekt und To-Do VOR der Anzeige auf Aktualität und Relevanz!
@@ -2450,7 +2453,7 @@ ${skillContext}
  - HEADER: Beginne direkt mit dem Briefing-Titel (z. B. "# ☀️ Tägliches Management-Update (${nowStr})"). Keine Executive Summary und keine Aufzählung von Datenquellen vor Abschnitt 1!
 - STRIKTES TABELLEN-VERBOT: Verwende NIEMALS Markdown-Tabellen! Formatiere ALLE Inhalte in sauberen Text-Absätzen und Aufzählungslisten (Bullet Points).
 - ANKLICKBARE QUELLEN-LINKS: Jede Information und jedes To-Do MUSS am Ende mit einer anklickbaren Quellenangabe als Markdown-Link belegt werden (z. B. [Quelle: Google Drive – "Transkript PK Montag"](https://...), [Quelle: Gmail – Betreff "...", Datum](https://...), [Quelle: Google Kalender – "1:1 Marion"](https://...)). Nutze stets die Direktlinks aus den Quellen-Abschnitten!
-- KEINE IGNORIERTEN TERMINE IM BERICHT: Erstelle NIEMALS einen Abschnitt oder Punkt wie "Ignorierte interne Termine". "Thursdays for Data" wird komplett stillschweigend ignoriert.
+- KEINE IGNORIERTEN TERMINE IM BERICHT: Erstelle NIEMALS einen Abschnitt oder Punkt wie "Ignorierte interne Termine". "Thursdays for Data" sowie private Coaching/Mentoring-Themen (inkl. Coaching J., Schwingdings) werden komplett stillschweigend ignoriert.
 
  FESTE 7-TEILIGE BRIEFING-STRUKTUR OHNE DOPPLUNGEN:
 
@@ -2561,7 +2564,7 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
  10b. HR-THEMA STATT PROJEKT: WorkFlex, Workation, Auslandsaufenthalt und zugehörige HR-/Steuerklärungen sind Personal- und Compliance-Themen, keine Projekte und keine Panda-Projekte. Auch wenn Sudipt Panda im Vorgang genannt wird, darf daraus kein Projektstatus, keine Projektallokation und kein Panda-Projekt abgeleitet werden.
 10. Querabgleich mit Terminen: Wenn heute ein Meeting (z. B. 1:1 mit Teammitgliedern) ansteht, nimm besprechbare Punkte als Meeting-Agendapunkte auf – erstelle aber To-Dos für echte Vorbereitungsaufgaben und vergangene Action Items!
 11. Abgeschlossene Aufgaben: Alle mit [ERLEDIGT] markierten oder im lokalen Memory explizit abgeschlossenen Einzelaufgaben dürfen nie erneut vorgeschlagen werden. Projekte nicht pauschal abschliessen; offene Google Tasks desselben Projekts bleiben gültig.
-12. Ignorierte Termine: "Thursdays for Data" ist intern und wird immer still ignoriert. KEINEN Abschnitt "Ignorierte interne Termine" erstellen!
+12. Ignorierte Termine: "Thursdays for Data" sowie privates Coaching/Mentoring (inkl. Coaching J., Schwingdings) sind komplett intern/privat und werden immer stillschweigend ignoriert. KEINEN Abschnitt "Ignorierte interne Termine" erstellen und NIEMALS in To-Dos oder Projektstatus aufnehmen!
 13. Projekt-Fakten & Schreibweisen:
     - "domcura" (immer kleingeschrieben).
     - "VOEST Alpine" (immer "VOEST Alpine").
