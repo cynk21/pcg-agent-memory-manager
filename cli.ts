@@ -18,6 +18,7 @@ import {
   fetchUpcomingEvents,
   fetchRecentEmails,
   fetchRecentChats,
+  fetchTelegramGroupMessages,
   fetchDriveKnowledgeBaseContext,
   performDailyUpdate,
   createGoogleTaskDirect,
@@ -26,6 +27,9 @@ import {
   generateAIContent,
   formatAIError,
 } from './server.ts';
+import { loadTelegramSessionString, saveTelegramSessionString } from './src/server/telegram-reader.ts';
+import { TelegramClient } from 'telegram';
+import { StringSession } from 'telegram/sessions/index.js';
 import { searchVerbatimEvidence } from './verbatim-evidence-ledger.ts';
 import { queryTemporalTimeline, upsertTemporalFact } from './temporal-facts.ts';
 import { recordDecision, searchDecisions } from './decision-memory.ts';
@@ -464,6 +468,36 @@ async function cmdAuth(force: boolean) {
   console.log('Ab jetzt läuft alles automatisch im Hintergrund (kein Browser mehr nötig).\n');
 }
 
+async function cmdTelegramAuth() {
+  console.log('\n--- Telegram Authentifizierung (MTProto User-Account) ---');
+  const apiIdStr = process.env.TELEGRAM_API_ID || await prompt('Bitte gib deine Telegram API_ID ein (von my.telegram.org): ');
+  const apiHash = process.env.TELEGRAM_API_HASH || await prompt('Bitte gib deinen Telegram API_HASH ein (von my.telegram.org): ');
+
+  const apiId = Number(apiIdStr);
+  if (!apiId || Number.isNaN(apiId)) {
+    console.error('Ungültige API_ID.');
+    return;
+  }
+
+  const stringSession = new StringSession('');
+  const client = new TelegramClient(stringSession, apiId, apiHash, {
+    connectionRetries: 3,
+  });
+
+  await client.start({
+    phoneNumber: async () => await prompt('Bitte gib deine Telefonnummer im internationalen Format ein (z. B. +491701234567): '),
+    password: async () => await prompt('Bitte gib dein 2FA-Passwort ein (falls aktiviert, sonst leer lassen): '),
+    phoneCode: async () => await prompt('Bitte gib den Bestätigungscode ein, den du per Telegram erhalten hast: '),
+    onError: (err) => console.error('Telegram Auth Fehler:', err),
+  });
+
+  const sessionStr = String(client.session.save());
+  saveTelegramSessionString(sessionStr);
+  console.log('\nErfolgreich bei Telegram angemeldet!');
+  console.log('Session wurde lokal in .telegram_session.json gespeichert.');
+  await client.disconnect();
+}
+
 async function cmdStatus() {
   console.log('\nPCG Agent Status\n');
 
@@ -475,6 +509,10 @@ async function cmdStatus() {
   const clientId = process.env.GOOGLE_CLIENT_ID || DEFAULT_CLIENT_ID;
   console.log(`Google Client ID:     ${clientId ? 'vorhanden' : 'FEHLT'}`);
   console.log(`Client Secret:        ${process.env.GOOGLE_CLIENT_SECRET ? 'vorhanden' : 'nicht benötigt'}`);
+
+  const tgSession = loadTelegramSessionString();
+  const tgApiId = process.env.TELEGRAM_API_ID;
+  console.log(`Telegram MTProto:     ${tgSession ? 'angemeldet (.telegram_session.json)' : tgApiId ? 'API_ID vorhanden, nicht angemeldet (npm run agent -- telegram-auth)' : 'nicht konfiguriert'}`);
 
   if (refreshToken) {
     try {
@@ -744,6 +782,7 @@ function printHelp() {
 PCG Agent CLI – Befehle:
 
   npm run agent -- auth [--force]      Einmalige Google-Anmeldung (Refresh-Token -> .env)
+  npm run agent -- telegram-auth       Einmalige Telegram-Anmeldung (MTProto Session -> .telegram_session.json)
   npm run agent -- status              Status von Tokens & letztem Daily-Run
   npm run agent -- daily               Tägliches Update (Tasks anlegen, Drive-Briefing, E-Mail)
   npm run agent -- todos               Google Tasks auflisten
@@ -778,6 +817,7 @@ async function main() {
   try {
     switch (cmd) {
       case 'auth': return await cmdAuth(args.includes('--force'));
+      case 'telegram-auth': return await cmdTelegramAuth();
       case 'status': return await cmdStatus();
       case 'daily': return await cmdDaily();
       case 'todos': return await cmdTodos();

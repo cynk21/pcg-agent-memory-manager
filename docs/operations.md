@@ -13,6 +13,9 @@ Kopiere `.env.example` nach `.env`. Die Datei bleibt lokal und darf nie committe
 | `GOOGLE_REFRESH_TOKEN` | Nach `auth` | Headless-CLI-Zugang |
 | `GOOGLE_REDIRECT_PORT` | Nein | OAuth-Callback, Standard `4315` |
 | `CHAT_SPACE_ID` | Nein | Google-Chat-Raum fuer Bot-Rueckkanal |
+| `TELEGRAM_API_ID` | Nein | Telegram App API-ID (my.telegram.org) |
+| `TELEGRAM_API_HASH` | Nein | Telegram App API-Hash (my.telegram.org) |
+| `TELEGRAM_SESSION` | Nein | Optionaler Telegram Session-String (sonst .telegram_session.json) |
 | `AI_ALLOWED_BASE_URLS` | Nein | Zusaetzliche, kommaseparierte Gateway-Hosts |
 
 Standardmaessig sind nur `gateway.pcg.io` und `generativelanguage.googleapis.com` als AI-Gateway zugelassen. Jeder weitere Host muss explizit ueber `AI_ALLOWED_BASE_URLS` freigegeben werden.

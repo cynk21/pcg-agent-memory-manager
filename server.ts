@@ -15,6 +15,7 @@ import { fetchUpcomingEvents } from './src/server/calendar-reader.ts';
 import { fetchRecentChats } from './src/server/chat-reader.ts';
 import { fetchRecentEmails } from './src/server/gmail-reader.ts';
 import { fetchTasks } from './src/server/tasks-reader.ts';
+import { fetchTelegramGroupMessages } from './src/server/telegram-reader.ts';
 import { getFileContent, listAllFiles } from './src/server/drive-reader.ts';
 import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readDriveKnowledgeBaseContext } from './src/server/drive-context.ts';
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
@@ -26,6 +27,8 @@ export { fetchTasks };
 export { fetchRecentEmails };
 
 export { fetchRecentChats };
+
+export { fetchTelegramGroupMessages };
 
 export { fetchUpcomingEvents };
 
@@ -2419,12 +2422,14 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     emailsContext,
     eventsContext,
     chatsContext,
+    telegramContext,
     tasksContext
   ] = await Promise.all([
     fetchDriveContext(accessToken),
     fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
+    fetchTelegramGroupMessages(recordVerbatimEvidence, /BRG\s*Info/i, 7),
     fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
@@ -2517,8 +2522,11 @@ ${emailsContext}
 --- KALENDER ---
 ${eventsContext}
 
---- CHATS ---
+--- CHATS & GOOGLE CHAT ---
 ${chatsContext}
+
+--- TELEGRAM (BRG INFO & GILDENKANÄLE) ---
+${telegramContext}
 
 --- AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN ---
 ${currentSquadSignals}
@@ -2587,13 +2595,13 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   ));
   summary = ensureCriticalProjectTasks(
     summary,
-    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}`,
+    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}`,
     tasksContext,
     dateStr,
   );
   summary = ensureMeetingProtocolTasks(
     summary,
-    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}`,
+    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}`,
     tasksContext,
     dateStr,
   );
