@@ -10,4 +10,6 @@ Skills are reusable procedures. They describe how the agent should work with the
 - [David One-on-One Preparation](david-one-on-one-preparation.md) - Build every David 1:1 agenda from the dedicated task.
 - [Daily Management Briefing](daily-management-briefing.md) - Produce the daily management update and deliver it.
 - [Project and Customer Status](project-and-customer-status.md) - Keep project execution separate from account context.
+- [Ortsbeirat & Kommunale Aufgaben](ortsbeirat-operations.md) - Dorfbudget, Bürgeranliegen, Förderprogramme und Kommunales für Glietz & Märkische Heide.
+- [BRG Erzmarschall Operations & Ratsarbeit](brg-erzmarschall-operations.md) - Ratsleitung, Personalwesen, Feldscher-System und Gildenkommunikation der Berliner Rittergilde.
 - [Chat Command Safety](chat-command-safety.md) - Safely classify and execute Chat instructions.

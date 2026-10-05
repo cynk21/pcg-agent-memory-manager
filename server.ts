@@ -20,7 +20,6 @@ import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readD
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
 import { recordVerbatimEvidence } from './src/server/evidence.ts';
 import { validateTextField } from './src/server/input-validation.ts';
-import { fetchAtlassianJiraStatusContext, fetchOdooProjectStatusContext } from './src/server/remote-mcp.ts';
 
 export { fetchTasks };
 
@@ -656,7 +655,8 @@ const AVAILABLE_SKILLS: Record<string, string> = {
   'david-one-on-one-preparation': 'david-one-on-one-preparation.md',
   'daily-management-briefing': 'daily-management-briefing.md',
   'project-and-customer-status': 'project-and-customer-status.md',
-  'squad-lead-operations': 'squad-lead-operations.md',
+  'ortsbeirat-operations': 'ortsbeirat-operations.md',
+  'brg-erzmarschall-operations': 'brg-erzmarschall-operations.md',
   'chat-command-safety': 'chat-command-safety.md',
 };
 
@@ -1001,7 +1001,8 @@ export async function generateStructuredMemoryConcepts(input: {
     'workspace-context-ingestion',
     'task-state-reconciliation',
     'project-and-customer-status',
-    'squad-lead-operations',
+    'ortsbeirat-operations',
+    'brg-erzmarschall-operations',
   ]);
   const response = await generateAIContent({
     contents: `Erzeuge aus dem folgenden Workspace-Kontext ein kuratiertes OKF-v0.2-Memory. Gib ausschließlich valides JSON als Array zurück.
@@ -1131,7 +1132,7 @@ function titleFromMemoryPath(value: string): string {
 export function validateDailyBriefingStructure(text: string): string {
   const expectedSections = [
     '## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen',
-    '## 2. Squad Lead Control',
+    '## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)',
     '## 3. 🚨 Proaktive Kunden- & Meeting-Vorbereitung',
     '## 4. 🔮 Vorausschau & Wochenausblick',
     '## 5. 🚨 Dringende Klärungen & Projekt-To-dos',
@@ -1573,28 +1574,6 @@ export function ensureActionSectionTasks(summary: string, tasksContext: string, 
   const merged = [...proposals, ...additions];
   const serialized = `<ACTION_PROPOSALS>\n${JSON.stringify(merged, null, 2)}\n</ACTION_PROPOSALS>`;
   return actionMatch ? summary.replace(actionMatch[0], serialized) : `${summary.trim()}\n\n${serialized}`;
-}
-
-function ensureMcpSourceMentions(summary: string, odooContext: string, jiraContext: string): string {
-  const mentions: string[] = [];
-  const odooProjectLines = odooContext.split('\n').filter(line => line.startsWith('- Odoo-Projekt-ID ')).slice(0, 15);
-  const jiraIssueLines = jiraContext.split('\n').filter(line => line.startsWith('- Jira ')).slice(0, 20);
-  if (/Odoo-Projekt- und Zeiterfassungskontext/.test(odooContext) && !/\[Quelle: Odoo MCP/.test(summary)) {
-    mentions.push('- **Odoo-Abgleich:** Aktuelle Odoo-Projekt-, Task- und Zeiterfassungsdaten wurden read-only verarbeitet. [Quelle: Odoo MCP](https://odoo-mcp.gateway.pcg.io/mcp/)');
-  }
-  if (/Jira-Projektstatus/.test(jiraContext) && !/\[Quelle: Atlassian MCP/.test(summary)) {
-    mentions.push('- **Jira-Abgleich:** Aktuelle Jira-Issues und Statusdaten wurden read-only verarbeitet. [Quelle: Atlassian MCP](https://mcp.atlassian.com/v1/mcp/authv2)');
-  }
-  if (mentions.length === 0) return summary;
-  const statusHeader = '\n## 7. 📋 Kompakte Projektstatusübersicht';
-  if (!summary.includes(statusHeader)) return `${summary}\n${mentions.join('\n')}`;
-  const odooOverview = odooProjectLines.length > 0
-    ? `\n### Odoo-Projektabgleich\n${odooProjectLines.join('\n')}\n[Quelle: Odoo MCP](https://odoo-mcp.gateway.pcg.io/mcp/)\n`
-    : '';
-  const jiraOverview = jiraIssueLines.length > 0
-    ? `\n### Jira-Projektabgleich\n${jiraIssueLines.join('\n')}\n[Quelle: Atlassian MCP](https://mcp.atlassian.com/v1/mcp/authv2)\n`
-    : '';
-  return summary.replace(statusHeader, `\n${mentions.join('\n')}\n${statusHeader}${odooOverview}${jiraOverview}`);
 }
 
 function convertMarkdownTablesToCleanText(text: string): string {
@@ -2199,7 +2178,7 @@ app.post('/api/agent/chat', async (req, res) => {
       todayCanonicalBriefing = `\n--- HEUTIGES KANONISCHES MANAGEMENT-BRIEFING (${dateStr}) ---\n${existingCron.summary}\n`;
     }
 
-    const systemPrompt = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (Squad Lead DATA / AI Consultant bei PCG). Deine Aufgabe ist die autonome, strukturierte und regelmäßige Pflege und Aktualisierung seines lokalen Memory-Systems (agent-memory/).
+    const systemPrompt = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde). Deine Aufgabe ist die autonome, strukturierte und regelmäßige Pflege und Aktualisierung seines lokalen Memory-Systems (agent-memory/).
 Dein Ziel ist es, den operativen Overhead für Hardy zu minimieren, indem du Rohdaten strukturierst, Risiken triagierst, ein proaktives Update-Interview führst und Management-reife Briefings vorbereitest. Du bist nicht für die Umsetzung von technischen Anforderungen von Kunden verantwortlich, 
 möchtest aber davon wissen und den Überblick behalten. Behalte die Projektmanager-Übersicht. Trage To-Dos ein zum Nachhaken, Klären oder Vorbereiten, wenn Deadlines oder Aufgaben irgendwo auftauchen. 
 
@@ -2279,12 +2258,12 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
       ## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen
       - **<Projekt / Person / Planung>**
         • **Änderung:** <Was ist neu oder anders>
-        • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Squad>
+        • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Organisation>
         • [Quelle: <Name>](<URL>)
       ---
-      ## 2. Squad Lead Control
-      - **Allocation / Billability / Booking / Projektplanung / David Weekly**
-        • <Aktueller Stand und offene Entscheidung>
+      ## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)
+      - **Dorfbudget / Fördermittel / Bürgeranliegen / Projekte / Beschlüsse**
+        • <Aktueller Stand, Mittelverwendung, Fristen oder offene Vorhaben für Glietz & Märkische Heide>
         • [Quelle: <Name>](<URL>)
       ---
       ## 3. 🚨 Proaktive Kunden- & Meeting-Vorbereitung (Heute, Morgen & Montag)
@@ -2313,7 +2292,7 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
        - Nur eine Zeile pro aktivem Projekt; keine Details oder To-dos wiederholen.
        - Neue Projekte aus aktuellen Quellen aufnehmen, auch ohne lokale Memory-Datei (z. B. Avantgarde).
        - [Quelle: <Name>](<URL>)
-     - Vermeide Dopplungen: Änderungen gehören ausschließlich in Abschnitt 1, Squad-/Kapazitätskontrollen ausschließlich in Abschnitt 2, dringende Projektklärungen in Abschnitt 5 und sonstige To-dos in Abschnitt 6. Abschnitt 7 bleibt kompakt.
+     - Vermeide Dopplungen: Änderungen gehören ausschließlich in Abschnitt 1, Ortsbeirats- & Kommunalthemen (Dorfbudget, Bürgeranliegen) ausschließlich in Abschnitt 2, dringende Projektklärungen in Abschnitt 5 und sonstige To-dos in Abschnitt 6. Abschnitt 7 bleibt kompakt.
 
 14. 🛡️ MANDATORISCHE SELBSTKONTROLLE (SELF-AUDIT VOR DER AUSGABE):
    - Führe vor der Ausgabe eine interne Selbstkontrolle durch:
@@ -2437,17 +2416,13 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     emailsContext,
     eventsContext,
     chatsContext,
-    tasksContext,
-    odooContext,
-    jiraContext
+    tasksContext
   ] = await Promise.all([
     fetchDriveContext(accessToken),
     fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
-    fetchTasks(oauth2Client, recordVerbatimEvidence),
-    fetchOdooProjectStatusContext(),
-    fetchAtlassianJiraStatusContext()
+    fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
   const davidAgendaContext = extractDavidOneOnOneAgenda(tasksContext);
@@ -2460,7 +2435,8 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     'david-one-on-one-preparation',
     'daily-management-briefing',
     'project-and-customer-status',
-    'squad-lead-operations',
+    'ortsbeirat-operations',
+    'brg-erzmarschall-operations',
   ]);
 
   const nowStr = new Date().toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' });
@@ -2485,15 +2461,15 @@ ${skillContext}
  ## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen
  - **<Projekt / Person / Planung>**
    • **Änderung:** <Was ist neu oder anders>
-   • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Squad>
+   • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Organisation>
    • [Quelle: <Name>](<URL>)
 
  ---
 
- ## 2. Squad Lead Control
- - **Allocation / Billability / Booking / Projektplanung / David Weekly**
-   • **Aktueller Stand:** <Nur aktuelle, source-backed Kontrollen>
-   • **Offene Entscheidung:** <Wer muss was klären, falls belegt>
+ ## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)
+ - **Dorfbudget / Fördermittel / Bürgeranliegen / Projekte / Beschlüsse**
+   • **Aktueller Stand:** <Aktueller Stand zu Dorfbudget, Zuwendungen z. B. Solarpark, Bürgeranliegen wie Gehwegsanierung, Förderprogrammen (LEADER, LAG Oderland) oder Ortsbeiratsthemen>
+   • **Offene Entscheidung:** <Was steht an, wer muss was freigeben oder entscheiden>
    • [Quelle: <Name>](<URL>)
 
  ---
@@ -2550,12 +2526,6 @@ ${projectCapacityEvidence}
 --- TO-DOS ---
 ${tasksContext}
 
---- ODOO PROJEKT- UND ZEITERFASSUNGSKONTEXT (READ-ONLY) ---
-${odooContext}
-
---- JIRA-PROJEKTSTATUS (READ-ONLY) ---
-${jiraContext}
-
 ${davidAgendaContext}
 
 --- LOKALES MEMORY / EXPLIZITE NUTZERKORREKTUREN (nur aktuelle Korrekturen; alte Auslastungsfakten nicht wiederverwenden) ---
@@ -2566,7 +2536,7 @@ ${localMemoryContext}
     contents: prompt,
     config: {
       temperature: 0.0,
-      systemInstruction: `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (Squad Lead DATA / AI Consultant bei PCG). Erstelle ein klares, management-taugliches Briefing auf Deutsch.
+      systemInstruction: `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde). Erstelle ein klares, management-taugliches Briefing auf Deutsch.
 
 MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
 1. KEINE TABELLEN: Verwende NIEMALS Markdown-Tabellen. Stelle alle Status-Übersichten in klaren Text-Absätzen und Aufzählungslisten (Bullet Points) dar.
@@ -2579,16 +2549,16 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
 6. Proaktive Meeting-Vorbereitung (spätestens 1 Tag vorher): Bereite Hardy auf Kunden- und Use-Case-Meetings (wie Schwarz / DSV) für heute, morgen und Montag basierend auf vorhandenen Notizen und eingetragenen Vorbereitungen vor.
 7. Vorausschau: Schaue vorausschauend auf Montag und die nächste Woche.
 8. Vollständigkeit: Gehe lückenlos alle aktiven, unerledigten Themen durch und synchronisiere sie mit den neuesten Quellen.
-  8a. DOPPLUNGSVERBOT: Änderungen ausschließlich in Abschnitt 1, Squad-Lead-Kontrollen ausschließlich in Abschnitt 2, dringende Projektklärungen ausschließlich in Abschnitt 5 und weitere To-dos ausschließlich in Abschnitt 6. Meetings nennen nur Agenda und Vorbereitung. Abschnitt 7 enthält je Projekt nur eine kompakte Statuszeile ohne Wiederholung.
+  8a. DOPPLUNGSVERBOT: Änderungen ausschließlich in Abschnitt 1, Ortsbeirat & Kommunales (Dorfbudget, Bürgeranliegen) ausschließlich in Abschnitt 2, dringende Projektklärungen ausschließlich in Abschnitt 5 und weitere To-dos ausschließlich in Abschnitt 6. Meetings nennen nur Agenda und Vorbereitung. Abschnitt 7 enthält je Projekt nur eine kompakte Statuszeile ohne Wiederholung.
   8b. PRIORITÄT: Dringende Blocker, Entscheidungen, fällige Projektaktionen und konkrete nächste Schritte stehen vor der optionalen Projektstatusübersicht. Die Statusübersicht darf nie zulasten dieser Hinweise ausführlich werden.
   8c. TODO-SYNCHRONISATION: Jede konkrete Aktion in Abschnitt 5 oder 6 muss als task in ACTION_PROPOSALS gespiegelt werden. Jede solche task-Aktion braucht ein sinnvolles dueDate im Format YYYY-MM-DD; offene Projektaktionen ohne Enddatum sind nicht zulässig.
   8e. EXPLIZITE BENUTZERBITTEN: Wenn Hardy in Chat, Mail oder Meeting ausdrücklich sagt, dass er sich um einen konkreten Kundenblocker oder Zugang kümmern will (z. B. WireGuard-Zugang für HHA), muss daraus zwingend ein eigener Google-Task mit Owner Hardy, konkreter nächster Aktion und Fälligkeitsdatum entstehen. Ein bloßer Hinweis in Abschnitt 1 reicht nicht.
   8f. TASK-ABGLEICH: Offene konkrete Aktionen aus Abschnitt 5 und 6 müssen in Google Tasks erscheinen. Erledigte Google Tasks und explizit abgeschlossene Aktionen dürfen weder im Bericht als offene nächste Schritte erscheinen noch erneut angelegt werden. Wenn eine Aktion heute fällig oder überfällig ist, verwende heute (${dateStr}) als Fälligkeitsdatum, sofern keine neue realistische Frist belegt ist.
   8d. E-MAIL-AUSGANG & FOLLOW-UP: Prüfe im E-Mail-Kontext ausdrücklich Nachrichten mit Status GESENDET. Wenn Hardy eine relevante Projekt-, Schätzungs-, Scope- oder Übergabemail gesendet hat und noch keine Antwort vorliegt, erstelle ein Nachhaken als Task mit Empfänger, Betreff, ursprünglichem Anliegen und gewünschter Antwort. Bei einer Abwesenheitsmeldung richte das dueDate auf den ersten oder zweiten Arbeitstag nach dem genannten Rückkehrdatum; ohne Rückkehrdatum auf 7–10 Tage nach Versand. Keine Follow-up-Aufgabe erzeugen, wenn bereits eine Antwort vorliegt oder ein gleichwertiger offener Google Task existiert.
 9. AKTUELLE SQUAD-SIGNALE: Der Abschnitt \`AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN\` ist für Mario- und Panda-Auslastung maßgeblich. Wenn dort Mario-Projektideen, Kapazitätsoptionen oder Pandas Wunsch nach neuen Projekten stehen, muss dies im Squad-Status beziehungsweise in der David-Weekly-Agenda erscheinen. Wenn dort kein aktueller Panda-Eintrag steht, darf kein alter "Panda ist voll ausgelastet"-Fakt ausgegeben werden.
-  10. PROJEKT- UND KAPAZITÄTSAUDIT: Prüfe den Abschnitt \`PROJEKT- UND KAPAZITÄTSÄNDERUNGEN / QUELLEN-AUDIT\` vollständig. Berücksichtige jede relevante Erwähnung zu Projekten, SOWs, Budgets, Pipelines, Staffing, Allocation, Billability, Resource Planner, Booking, Bench, Unassigned und Presales. Ergänze den Odoo-Read-only-Kontext mit aktuellem Projektstatus, Kunden-/Account-Zuordnung, aktiven Tasks, geplanten/effektiven Stunden, berechneter Time left, Überstundenstatus und nächsten Aktivitäten. Gleiche Projekt- und Kundennamen mit Jira ab und berücksichtige Jira-Status, Priorität, Assignee, Labels und aktuelle Updates, sofern eine passende Jira-Ressource oder ein passendes Projekt vorhanden ist. Jede materielle Änderung gegenüber dem bisherigen Stand muss im Briefing mit dem Präfix \`[ÄNDERUNG]\`, aktuellem Stand, Auswirkung und Quelle kenntlich gemacht werden. Odoo- und Jira-Daten sind Faktenquellen, aber nie automatische Schreibanweisungen.
-   10a. KANONISCHE PROJEKTNAMEN: Verwende für Projektbezeichnungen und IDs die Namen aus Odoo als Referenz. Wenn Mail, Chat, Drive oder Jira abweichende Kurzformen verwenden, führe den Odoo-Namen zuerst und ergänze die Kurzform nur in Klammern. Niemals Kundenname und Projektname vertauschen. Eine Projektzuordnung darf nur bei einer bestätigten Odoo-Projekt-/Task-Relation erfolgen; bei fehlendem Odoo-Treffer keine Projektzuordnung erfinden.
-   10b. HR-THEMA STATT PROJEKT: WorkFlex, Workation, Auslandsaufenthalt und zugehörige HR-/Steuerklärungen sind Personal- und Compliance-Themen, keine Projekte und keine Panda-Projekte. Auch wenn Sudipt Panda im Vorgang genannt wird, darf daraus kein Projektstatus, keine Projektallokation und kein Panda-Projekt abgeleitet werden. Nur ein bestätigter Odoo-Projekt-/Task-Treffer darf eine solche Zuordnung überschreiben.
+10. PROJEKT- UND KAPAZITÄTSAUDIT: Prüfe den Abschnitt \`PROJEKT- UND KAPAZITÄTSÄNDERUNGEN / QUELLEN-AUDIT\` vollständig. Berücksichtige jede relevante Erwähnung zu Projekten, SOWs, Budgets, Pipelines, Staffing, Allocation, Billability, Resource Planner, Booking, Bench, Unassigned und Presales. Jede materielle Änderung gegenüber dem bisherigen Stand muss im Briefing mit dem Präfix \`[ÄNDERUNG]\`, aktuellem Stand, Auswirkung und Quelle kenntlich gemacht werden.
+ 10a. PROJEKTNAMEN: Niemals Kundenname und Projektname vertauschen. Keine Projektzuordnung ohne Beleg erfinden.
+ 10b. HR-THEMA STATT PROJEKT: WorkFlex, Workation, Auslandsaufenthalt und zugehörige HR-/Steuerklärungen sind Personal- und Compliance-Themen, keine Projekte und keine Panda-Projekte. Auch wenn Sudipt Panda im Vorgang genannt wird, darf daraus kein Projektstatus, keine Projektallokation und kein Panda-Projekt abgeleitet werden.
 10. Querabgleich mit Terminen: Wenn heute ein Meeting (z. B. 1:1 mit Teammitgliedern) ansteht, nimm besprechbare Punkte als Meeting-Agendapunkte auf – erstelle aber To-Dos für echte Vorbereitungsaufgaben und vergangene Action Items!
 11. Abgeschlossene Aufgaben: Alle mit [ERLEDIGT] markierten oder im lokalen Memory explizit abgeschlossenen Einzelaufgaben dürfen nie erneut vorgeschlagen werden. Projekte nicht pauschal abschliessen; offene Google Tasks desselben Projekts bleiben gültig.
 12. Ignorierte Termine: "Thursdays for Data" ist intern und wird immer still ignoriert. KEINEN Abschnitt "Ignorierte interne Termine" erstellen!
@@ -2625,7 +2595,6 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
     dateStr,
   );
   summary = ensureActionSectionTasks(summary, tasksContext, dateStr);
-  summary = ensureMcpSourceMentions(summary, odooContext, jiraContext);
 
   try {
     // Keep structured memory current on every daily run; operators can disable

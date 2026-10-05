@@ -32,7 +32,7 @@ Der erste Befehl oeffnet einmalig einen Browser. Danach arbeitet die CLI mit dem
 npm run agent -- daily
 ```
 
-Der Lauf sammelt Workspace-Kontext, speichert Rohquellen unverändert im Evidence Ledger, erstellt ein 7-teiliges Management-Briefing (Änderungen, Squad Lead Control, Meetings, Ausblick, dringende Klärungen, weitere nächste Schritte, kompakte Projektstatusübersicht), synchronisiert es nach Drive, sendet eine Zusammenfassung per E-Mail und postet das Briefing in den Google-Chat-Raum.
+Der Lauf sammelt Workspace-Kontext, speichert Rohquellen unverändert im Evidence Ledger, erstellt ein 7-teiliges Management-Briefing (Änderungen, Ortsbeirat & Kommunales, Meetings, Ausblick, dringende Klärungen, weitere nächste Schritte, kompakte Projektstatusübersicht), synchronisiert es nach Drive, sendet eine Zusammenfassung per E-Mail und postet das Briefing in den Google-Chat-Raum.
 
 Vor der Analyse synchronisiert der Lauf die strukturierten OKF-Dateien aus dem lokalen `agent-memory/`-Ordner (inklusive Unterordner) in den konfigurierten Drive-Memory-Ordner. Diese Dateien bleiben die autoritative lokale Quelle; Token- und Geheimdateien werden nicht synchronisiert.
 
@@ -51,9 +51,6 @@ npm run agent -- fact-timeline ["Mario Pasculli"] [--all]
 # 3. Entscheidungsgedächtnis (Decision Memory)
 npm run agent -- decision-record -- --title "K&B Modellwahl" --decision "Gemini 2.5 Flash aktiv nutzen" --rationale "Kostenfaktor" --project "Koenig & Bauer" --alts "Gemini 3.7 Flash,Claude" --owner "Hardy Engwer" --tags "ai-model,kosten"
 npm run agent -- decision-search "Kostenfaktor" [--project "Koenig & Bauer"]
-
-# 4. MCP Server für externe Agenten (Claude Code / Gemini CLI)
-npm run agent -- memory-mcp
 ```
 
 ## Windows Task Scheduler
@@ -83,17 +80,6 @@ schtasks /create /tn "PCG Agent Chat" /tr "wscript.exe `"$project\run-agent-hidd
 ```
 
 Vor dem Aktivieren geplanter Tasks einen manuellen `daily`- und `chat-process`-Lauf pruefen.
-
-## Browser-Vergleich
-
-Der Browser-Vergleich liest ausschliesslich die sichtbaren Inhalte von URLs ueber `@browsermcp/mcp` und die Browser-MCP-Extension. Jira- und Odoo-Logins werden nicht ausgelesen; die bestehende Browser-Sitzung wird verwendet. Vor dem Lauf muss der gewuenschte Tab in der Extension mit `Connect` verbunden werden.
-
-```bash
-npm run agent -- browser-pages
-npm run agent -- browser-compare --urls "https://jira.example/project,https://odoo.example/project" --instruction "Vergleiche die Projekte hinsichtlich Status, Verantwortlichen und naechsten Schritten."
-```
-
-Es gibt keine Schreibaktionen. Fuer zusaetzliche Sicherheit kann `BROWSER_ALLOWED_HOSTS` in `.env` auf eine kommaseparierte Liste erlaubter Hostnamen gesetzt werden.
 
 ## Wartung
 

@@ -13,13 +13,14 @@ Produce a concise, source-backed daily briefing from the curated memory and curr
 5. Detect new projects from current ownership/PM handovers, even if no local project file exists.
 6. Separate urgent project clarifications and actions from the compact project status overview.
 7. Reconcile every recommendation against Google Tasks.
-8. Check the Squad Lead Operations skill for the monthly allocation, weekly billability and booking controls.
+8. Check the Ortsbeirat & Kommunales skill for Dorfbudget and the BRG Erzmarschall Operations skill for council decisions, protocols and guild operations.
 9. Send the final briefing by email and split it into Google Chat messages.
 
 ## Output
 
 - Project and capacity changes, marked with `[ÄNDERUNG]`
-- Squad Lead Control: allocation, billability, project planning, booking completeness and David Weekly
+- Ortsbeirat & Kommunales (Glietz / Märkische Heide): Dorfbudget, Förderprogramme (LEADER, LAG Oderland), Bürgeranliegen, Beschlüsse und Vorhaben.
+- BRG Erzmarschall & Ratsarbeit: Protokoll-Aktionspunkte, Feldscher-System, Servanten & Ratsreform.
 - Meeting preparation
 - Urgent project clarifications and concrete project actions before the status overview
 - Compact project and customer status at the end, without repeating earlier sections

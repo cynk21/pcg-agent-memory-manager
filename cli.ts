@@ -29,15 +29,10 @@ import {
 import { searchVerbatimEvidence } from './verbatim-evidence-ledger.ts';
 import { queryTemporalTimeline, upsertTemporalFact } from './temporal-facts.ts';
 import { recordDecision, searchDecisions } from './decision-memory.ts';
-import { runMemoryMcpStdio } from './memory-mcp-server.ts';
-import { captureCurrentBrowserPage, compareBrowserPages } from './browser-mcp.ts';
-import { callRemoteMcpTool, discoverConfiguredRemoteMcpTools, getConfiguredRemoteMcpServerAsync } from './src/server/remote-mcp.ts';
 
 const ROOT = process.cwd();
 const ENV_FILE = path.join(ROOT, '.env');
 const REFRESH_FILE = path.join(ROOT, 'agent-memory', '.google-refresh-token.json');
-const ODOO_MCP_TOKEN_FILE = path.join(ROOT, '.odoo-mcp-token.json');
-const ATLASSIAN_MCP_TOKEN_FILE = path.join(ROOT, '.atlassian-mcp-token.json');
 
 const CHAT_MARKER = '[PCG-Agent]';
 const CHAT_STATE_FILE = path.join(ROOT, '.chat-state.json');
@@ -45,10 +40,6 @@ const CHAT_STATE_FILE = path.join(ROOT, '.chat-state.json');
 const DEFAULT_CLIENT_ID = '261415172337-16a674uqih6mk269b0hj8q61qguq6scp.apps.googleusercontent.com';
 const REDIRECT_PORT = Number(process.env.GOOGLE_REDIRECT_PORT || 4315);
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}`;
-const ODOO_MCP_REDIRECT_PORT = Number(process.env.ODOO_MCP_REDIRECT_PORT || 4316);
-const ODOO_MCP_REDIRECT_URI = `http://127.0.0.1:${ODOO_MCP_REDIRECT_PORT}/callback`;
-const ATLASSIAN_MCP_REDIRECT_PORT = Number(process.env.ATLASSIAN_MCP_REDIRECT_PORT || 4317);
-const ATLASSIAN_MCP_REDIRECT_URI = `http://127.0.0.1:${ATLASSIAN_MCP_REDIRECT_PORT}/callback`;
 
 const SCOPES = [
   'https://www.googleapis.com/auth/drive',
@@ -105,139 +96,6 @@ function postForm(url: string, params: Record<string, string>): Promise<any> {
     req.write(body);
     req.end();
   });
-}
-
-async function cmdOdooMcpAuth() {
-  const verifier = base64url(crypto.randomBytes(32));
-  const challenge = base64url(crypto.createHash('sha256').update(verifier).digest());
-  const state = base64url(crypto.randomBytes(24));
-  const registration = await new Promise<any>((resolve, reject) => {
-    const body = JSON.stringify({
-      client_name: 'PCG Agent Memory Manager',
-      redirect_uris: [ODOO_MCP_REDIRECT_URI],
-      grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'none',
-      scope: 'odoo.read offline_access',
-    });
-    const request = https.request('https://auth.gateway.pcg.io/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, response => {
-      let data = '';
-      response.on('data', chunk => data += chunk);
-      response.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (response.statusCode && response.statusCode >= 400) reject(new Error(`Odoo-MCP-Client-Registrierung fehlgeschlagen (${response.statusCode}): ${data}`));
-          else resolve(parsed);
-        } catch (error) { reject(error); }
-      });
-    });
-    request.on('error', reject);
-    request.write(body);
-    request.end();
-  });
-
-  if (!registration.client_id) throw new Error('Odoo-MCP lieferte keine client_id zurück.');
-  const authUrl = new URL('https://auth.gateway.pcg.io/authorize');
-  authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('client_id', registration.client_id);
-  authUrl.searchParams.set('redirect_uri', ODOO_MCP_REDIRECT_URI);
-  authUrl.searchParams.set('scope', 'odoo.read offline_access');
-  authUrl.searchParams.set('resource', 'https://odoo-mcp.gateway.pcg.io/mcp/');
-  authUrl.searchParams.set('code_challenge', challenge);
-  authUrl.searchParams.set('code_challenge_method', 'S256');
-  authUrl.searchParams.set('state', state);
-
-  const codePromise = new Promise<string>((resolve, reject) => {
-    const callbackServer = http.createServer((req, res) => {
-      const url = new URL(req.url || '/', `http://127.0.0.1:${ODOO_MCP_REDIRECT_PORT}`);
-      const error = url.searchParams.get('error');
-      const code = url.searchParams.get('code');
-      const returnedState = url.searchParams.get('state');
-      res.writeHead(error ? 400 : 200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(error ? `<h2>Odoo-Anmeldung fehlgeschlagen: ${error}</h2>` : '<h2>Odoo-Anmeldung erfolgreich. Dieses Fenster kann geschlossen werden.</h2>');
-      callbackServer.close();
-      if (error) reject(new Error(`Odoo-OAuth fehlgeschlagen: ${error}`));
-      else if (returnedState !== state) reject(new Error('Odoo-OAuth State-Prüfung fehlgeschlagen.'));
-      else if (code) resolve(code);
-      else reject(new Error('Odoo-OAuth lieferte keinen Code.'));
-    });
-    callbackServer.listen(ODOO_MCP_REDIRECT_PORT, '127.0.0.1');
-  });
-
-  console.log(`Odoo-MCP-Anmeldung wird geöffnet: ${authUrl}`);
-  openBrowser(authUrl.toString());
-  const code = await codePromise;
-  const token = await postForm('https://auth.gateway.pcg.io/token', {
-    grant_type: 'authorization_code',
-    client_id: registration.client_id,
-    redirect_uri: ODOO_MCP_REDIRECT_URI,
-    code,
-    code_verifier: verifier,
-  });
-  if (!token.access_token) throw new Error(`Odoo-MCP lieferte keinen Access-Token: ${JSON.stringify(token)}`);
-  fs.writeFileSync(ODOO_MCP_TOKEN_FILE, JSON.stringify({ ...token, client_id: registration.client_id, redirect_uri: ODOO_MCP_REDIRECT_URI, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
-  console.log(`Odoo-MCP-Token lokal gespeichert: ${ODOO_MCP_TOKEN_FILE}`);
-}
-
-async function cmdAtlassianMcpAuth() {
-  const verifier = base64url(crypto.randomBytes(32));
-  const challenge = base64url(crypto.createHash('sha256').update(verifier).digest());
-  const state = base64url(crypto.randomBytes(24));
-  const registrationBody = JSON.stringify({
-    client_name: 'PCG Agent Memory Manager',
-    redirect_uris: [ATLASSIAN_MCP_REDIRECT_URI],
-    grant_types: ['authorization_code', 'refresh_token'],
-    response_types: ['code'],
-    token_endpoint_auth_method: 'none',
-    scope: 'read:me read:account read:jira-work search:confluence read:confluence-user read:page:confluence read:comment:confluence read:space:confluence offline_access',
-  });
-  const registration = await new Promise<any>((resolve, reject) => {
-    const request = https.request('https://mcp.atlassian.com/v1/register', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(registrationBody) } }, response => {
-      let data = '';
-      response.on('data', chunk => data += chunk);
-      response.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (response.statusCode && response.statusCode >= 400) reject(new Error(`Atlassian-MCP-Registrierung fehlgeschlagen (${response.statusCode}): ${data}`));
-          else resolve(parsed);
-        } catch (error) { reject(error); }
-      });
-    });
-    request.on('error', reject);
-    request.write(registrationBody);
-    request.end();
-  });
-  if (!registration.client_id) throw new Error('Atlassian-MCP lieferte keine client_id zurück.');
-
-  const authUrl = new URL('https://mcp.atlassian.com/v1/authorize');
-  for (const [key, value] of Object.entries({ response_type: 'code', client_id: registration.client_id, redirect_uri: ATLASSIAN_MCP_REDIRECT_URI, scope: 'read:me read:account read:jira-work search:confluence read:confluence-user read:page:confluence read:comment:confluence read:space:confluence offline_access', resource: 'https://mcp.atlassian.com/v1/mcp/authv2', code_challenge: challenge, code_challenge_method: 'S256', state })) authUrl.searchParams.set(key, value);
-
-  const codePromise = new Promise<string>((resolve, reject) => {
-    const callbackServer = http.createServer((req, res) => {
-      const url = new URL(req.url || '/', `http://127.0.0.1:${ATLASSIAN_MCP_REDIRECT_PORT}`);
-      const error = url.searchParams.get('error');
-      const code = url.searchParams.get('code');
-      const returnedState = url.searchParams.get('state');
-      res.writeHead(error ? 400 : 200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(error ? `<h2>Atlassian-Anmeldung fehlgeschlagen: ${error}</h2>` : '<h2>Atlassian-Anmeldung erfolgreich. Dieses Fenster kann geschlossen werden.</h2>');
-      callbackServer.close();
-      if (error) reject(new Error(`Atlassian-OAuth fehlgeschlagen: ${error}`));
-      else if (returnedState !== state) reject(new Error('Atlassian-OAuth State-Prüfung fehlgeschlagen.'));
-      else if (code) resolve(code);
-      else reject(new Error('Atlassian-OAuth lieferte keinen Code.'));
-    });
-    callbackServer.listen(ATLASSIAN_MCP_REDIRECT_PORT, '127.0.0.1');
-  });
-  console.log(`Atlassian-MCP-Anmeldung wird geöffnet: ${authUrl}`);
-  openBrowser(authUrl.toString());
-  const code = await codePromise;
-  const token = await postForm('https://mcp.atlassian.com/v1/token', { grant_type: 'authorization_code', client_id: registration.client_id, redirect_uri: ATLASSIAN_MCP_REDIRECT_URI, code, code_verifier: verifier });
-  if (!token.access_token) throw new Error(`Atlassian-MCP lieferte keinen Access-Token: ${JSON.stringify(token)}`);
-  fs.writeFileSync(ATLASSIAN_MCP_TOKEN_FILE, JSON.stringify({ ...token, client_id: registration.client_id, redirect_uri: ATLASSIAN_MCP_REDIRECT_URI, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
-  console.log(`Atlassian-MCP-Token lokal gespeichert: ${ATLASSIAN_MCP_TOKEN_FILE}`);
 }
 
 function exchangeCode(code: string, verifier: string, clientSecret: string) {
@@ -375,10 +233,10 @@ async function cmdChatSend(text: string) {
 }
 
 async function processChatCommand(text: string, token: string, oauth2Client: any): Promise<string> {
-  const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (Squad Lead DATA / AI Consultant bei PCG). Interpretiere die folgende Chat-Nachricht von Hardy und übersetze sie in GENAU EIN JSON-Aktionsobjekt. Antworte ausschließlich mit:
+  const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde). Interpretiere die folgende Chat-Nachricht von Hardy und übersetze sie in GENAU EIN JSON-Aktionsobjekt. Antworte ausschließlich mit:
 
 <ACTION>
- { "action": "task" | "calendar" | "email" | "todos" | "status" | "daily" | "browser-compare", "title": "", "notes": "", "dueDate": "", "startTime": "", "to": "", "subject": "", "body": "", "urls": "" }
+ { "action": "task" | "calendar" | "email" | "todos" | "status" | "daily", "title": "", "notes": "", "dueDate": "", "startTime": "", "to": "", "subject": "", "body": "" }
 </ACTION>
 
 Regeln:
@@ -388,7 +246,6 @@ Regeln:
 - todos: Liste der offenen Google Tasks ausgeben (keine weiteren Felder nötig).
 - status: Status des letzten Daily-Updates ausgeben.
 - daily: Das komplette tägliche Update (Briefing + Tasks + E-Mail) jetzt auslösen.
-- browser-compare: Die angegebenen HTTP(S)-URLs nacheinander im über die Browser MCP Extension verbundenen Tab öffnen und vergleichen. urls muss mindestens zwei URLs enthalten; title oder notes enthält die Vergleichsanweisung.
 - Wenn die Absicht unklar ist, wähle action="todos".
 Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
 
@@ -457,12 +314,6 @@ Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
         const result = await performDailyUpdate(token, true, { autoCreateTasks: true });
         const tasks = (result.createdTasks || []).map((t) => `${t.error ? 'FEHLER' : 'OK'}: ${t.title}`).join('\n') || 'keine';
         return `Daily-Update abgeschlossen (${result.dateStr}).\nErstellte Tasks:\n${tasks}\nE-Mail: ${result.emailSent ? 'gesendet' : 'fehlgeschlagen'}.`;
-      }
-      case 'browser-compare': {
-        const instruction = action.title || action.notes || 'Vergleiche die sichtbaren Seiten und nenne die wichtigsten Unterschiede.';
-        if (!action.urls) return 'Browser-Vergleich benötigt urls mit mindestens zwei HTTP(S)-URLs.';
-        const result = await compareBrowserPages(instruction, action.urls);
-        return `Browser-Vergleich (${result.pages.map((page) => page.url).join(', ')}):\n\n${result.result}`;
       }
       case 'todos':
       default: {
@@ -643,35 +494,6 @@ async function cmdStatus() {
   console.log('');
 }
 
-async function cmdMcpDiscover() {
-  console.log('\nRemote-MCP-Tool-Discovery (read-only)\n');
-  const results = await discoverConfiguredRemoteMcpTools();
-  for (const [server, tools] of Object.entries(results)) {
-    console.log(`## ${server}`);
-    if ('error' in tools) {
-      console.log(`Fehler: ${tools.error}`);
-      continue;
-    }
-    if (tools.length === 0) {
-      console.log('Keine Tools gemeldet.');
-      continue;
-    }
-    for (const tool of tools) console.log(`- ${tool.name}: ${tool.description || '(keine Beschreibung)'}`);
-  }
-}
-
-async function cmdOdooMcpCall(toolName: string, rawArgs = '{}') {
-  const args = JSON.parse(rawArgs);
-  const requestTools = new Set(['get_model_fields', 'search_records', 'read_records', 'count_records', 'aggregate_records', 'prepare_mutation', 'commit_mutation']);
-  const result = await callRemoteMcpTool(await getConfiguredRemoteMcpServerAsync('odoo-mcp'), toolName, requestTools.has(toolName) ? { request: args } : args);
-  console.log(JSON.stringify(result, null, 2));
-}
-
-async function cmdAtlassianMcpCall(toolName: string, rawArgs = '{}') {
-  const result = await callRemoteMcpTool(await getConfiguredRemoteMcpServerAsync('atlassian'), toolName, JSON.parse(rawArgs));
-  console.log(JSON.stringify(result, null, 2));
-}
-
 async function cmdDaily() {
   const accessToken = await getAccessToken();
   console.log('\nStarte tägliches Update (analyze -> Gemini -> Tasks -> Drive -> E-Mail)...\n');
@@ -788,25 +610,6 @@ async function cmdCalendar(args: string[]) {
     },
   });
   console.log(`Termin angelegt: ${title} (ID: ${created.data.id})`);
-}
-
-async function cmdBrowserPages() {
-  const snapshot = await captureCurrentBrowserPage();
-  console.log('\nAktueller über Browser MCP verbundener Tab:\n');
-  console.log(snapshot || '(Kein Seiteninhalt gelesen.)');
-  console.log('');
-}
-
-async function cmdBrowserCompare(args: string[]) {
-  const urls = flagValue(args, '--urls');
-  const instruction = flagValue(args, '--instruction');
-  if (!urls || !instruction) {
-    console.error('Nutzung: npm run agent -- browser-compare --urls "https://jira.example/project,https://odoo.example/project" --instruction "Vergleiche die Projekte"');
-    process.exit(1);
-  }
-  const result = await compareBrowserPages(instruction, urls);
-  console.log(`\nVerglichene URLs: ${result.pages.map((page) => page.url).join(', ')}\n`);
-  console.log(result.result);
 }
 
 async function cmdEvidenceSearch(args: string[]) {
@@ -947,19 +750,11 @@ PCG Agent CLI – Befehle:
   npm run agent -- task "Titel" [--due YYYY-MM-DD] [--notes "Notiz"]
   npm run agent -- email --to x@y.de --subject "Betreff" --body "Text"
   npm run agent -- calendar --title "Titel" --when "YYYY-MM-DD HH:MM" [--duration-min 60]
-  npm run agent -- browser-pages    Verbundenen Browser-MCP-Tab auslesen
-  npm run agent -- browser-compare --urls "url1,url2" --instruction "Vergleiche die Projekte"
   npm run agent -- evidence-search "Begriff" [--source drive|gmail|calendar|chat|tasks] [--project name] [--limit 5]
   npm run agent -- fact-upsert --subject "Name" --predicate "rel" --object "Wert" [--from ISO] [--source-url URL]
   npm run agent -- fact-timeline ["Subject"] [--predicate "rel"] [--all]
   npm run agent -- decision-record --title "Titel" --decision "Beschluss" --rationale "Grund" [--project "P"] [--alts "A1,A2"] [--owner "O"] [--tags "t1,t2"]
   npm run agent -- decision-search ["Begriff"] [--project "P"] [--tag "t"] [--owner "O"]
-  npm run agent -- memory-mcp       Startet den MCP Server (Stdio) für Claude Code / Gemini CLI
-  npm run agent -- mcp-discover     Listet Tools der konfigurierten Remote-MCP-Server (read-only)
-  npm run agent -- mcp-auth-odoo   Einmalige Odoo-MCP-OAuth-Anmeldung
-  npm run agent -- mcp-auth-atlassian Einmalige Atlassian-MCP-OAuth-Anmeldung
-  npm run agent -- mcp-call-odoo <tool> [json]  Read-only Odoo-MCP-Tool aufrufen
-  npm run agent -- mcp-call-atlassian <tool> [json]  Read-only Atlassian-MCP-Tool aufrufen
 
 Chat-Rückkanal (Google Chat Bot):
   npm run agent -- chat-spaces         Chat-Räume auflisten (Raum-ID für .env)
@@ -989,19 +784,11 @@ async function main() {
       case 'task': return await cmdTask(args.slice(1));
       case 'email': return await cmdEmail(args.slice(1));
       case 'calendar': return await cmdCalendar(args.slice(1));
-      case 'browser-pages': return await cmdBrowserPages();
-      case 'browser-compare': return await cmdBrowserCompare(args.slice(1));
       case 'evidence-search': return await cmdEvidenceSearch(args.slice(1));
       case 'fact-upsert': return await cmdFactUpsert(args.slice(1));
       case 'fact-timeline': return await cmdFactTimeline(args.slice(1));
       case 'decision-record': return await cmdDecisionRecord(args.slice(1));
       case 'decision-search': return await cmdDecisionSearch(args.slice(1));
-      case 'memory-mcp': return await runMemoryMcpStdio();
-      case 'mcp-discover': return await cmdMcpDiscover();
-      case 'mcp-auth-odoo': return await cmdOdooMcpAuth();
-      case 'mcp-auth-atlassian': return await cmdAtlassianMcpAuth();
-      case 'mcp-call-odoo': return await cmdOdooMcpCall(args[1], args[2] || '{}');
-      case 'mcp-call-atlassian': return await cmdAtlassianMcpCall(args[1], args[2] || '{}');
       case 'chat-spaces': return await cmdChatSpaces();
       case 'chat-send': return await cmdChatSend(args.slice(1).join(' '));
       case 'chat-process': return await cmdChatProcess();
