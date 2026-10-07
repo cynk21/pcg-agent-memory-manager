@@ -39,6 +39,33 @@ function isPriorityChat(title: string, priorityPatterns: string[]): boolean {
   return priorityPatterns.some(p => t.includes(p));
 }
 
+/**
+ * gramJS' interne Update-Schleife (updates.js -> _updateLoop) wirft nach dem
+ * Trennen der Verbindung eine verwaiste "TIMEOUT"-Rejection, die sonst als
+ * Fehler am Prozessende erscheint (stört z. B. Task-Scheduler-Logs).
+ * Wir fangen genau diese bekannte, harmlose Rejection ab — alles andere
+ * bleibt unberührt.
+ */
+let timeoutGuardInstalled = false;
+function installGramJsTimeoutGuard(): void {
+  if (timeoutGuardInstalled) return;
+  timeoutGuardInstalled = true;
+  process.on('unhandledRejection', (reason: any) => {
+    const message = reason?.message || String(reason);
+    const stack = reason?.stack || '';
+    if (message === 'TIMEOUT' && stack.includes('telegram')) {
+      return; // bekannter gramJS-Disconnect-Artefakt, ignorieren
+    }
+    throw reason;
+  });
+}
+
+/** Verbindung sauber beenden: disconnect + destroy stoppen auch die Update-Loop. */
+async function shutdownClient(client: TelegramClient): Promise<void> {
+  try { await client.disconnect(); } catch { /* ignore */ }
+  try { await client.destroy(); } catch { /* ignore */ }
+}
+
 export function loadTelegramSessionString(): string {
   if (process.env.TELEGRAM_SESSION) return process.env.TELEGRAM_SESSION.trim();
   if (fs.existsSync(SESSION_FILE)) {
@@ -94,6 +121,7 @@ export async function fetchTelegramGroupMessages(
   const client = new TelegramClient(stringSession, apiId, apiHash, {
     connectionRetries: 3,
   });
+  installGramJsTimeoutGuard();
 
   try {
     await client.connect();
@@ -125,7 +153,7 @@ export async function fetchTelegramGroupMessages(
       .slice(0, MAX_DIALOGS);
 
     if (activeDialogs.length === 0) {
-      await client.disconnect();
+      await shutdownClient(client);
       return '(Telegram: Keine aktiven Chats mit Nachrichten im Zeitfenster gefunden)\n';
     }
 
@@ -187,7 +215,7 @@ export async function fetchTelegramGroupMessages(
       recordEvidence(evidenceList);
     }
 
-    await client.disconnect();
+    await shutdownClient(client);
 
     if (totalMessages === 0) {
       return '(Telegram: Keine Textnachrichten der letzten 7 Tage in aktiven Chats gefunden)\n';
@@ -196,7 +224,7 @@ export async function fetchTelegramGroupMessages(
     return context;
   } catch (err: any) {
     console.warn('Telegram fetch error:', err?.message || err);
-    try { await client.disconnect(); } catch {}
+    await shutdownClient(client);
     return `(Telegram Nachrichten konnten nicht geladen werden: ${err?.message || err})\n`;
   }
 }
