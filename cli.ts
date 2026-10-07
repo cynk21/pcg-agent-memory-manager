@@ -909,8 +909,10 @@ function flagValue(args: string[], name: string): string | undefined {
 }
 
 function extractDailyTodoSection(summary: string): string {
-  const sectionMatch = summary.match(/## 6\.\s+[^\n]+[\s\S]*?(?=\n<ACTION_PROPOSALS>|$)/i);
-  return sectionMatch?.[0]?.trim() || '## Handlungsempfehlungen\n\nKeine aktuellen To-Dos gefunden.';
+  const s5 = summary.match(/## 5\.\s+[^\n]+[\s\S]*?(?=\n## 6\.|\n<ACTION_PROPOSALS>|$)/i);
+  const s6 = summary.match(/## 6\.\s+[^\n]+[\s\S]*?(?=\n## 7\.|\n<ACTION_PROPOSALS>|$)/i);
+  const combined = [s5?.[0]?.trim(), s6?.[0]?.trim()].filter(Boolean).join('\n\n');
+  return combined || '## Handlungsempfehlungen\n\nKeine aktuellen To-Dos gefunden.';
 }
 
 async function generateDailyChatProactiveMessage(summary: string, createdTasks: { title: string; id?: string; error?: string }[] = []): Promise<string> {
@@ -919,27 +921,27 @@ async function generateDailyChatProactiveMessage(summary: string, createdTasks: 
     ? createdTasks.map(t => `- [ ] ${t.title}`).join('\n')
     : '(Keine neuen Tasks heute angelegt)';
 
-  const prompt = `Du bist der PCG Agent Memory Manager, der proaktive persönliche Assistent von Hardy Engwer (IT/KI Consultant, Ortsvorsteher Glietz, Erzmarschall Berliner Rittergilde).
+  const prompt = `Du bist der PCG Agent Memory Manager, der proaktive persönliche KI-Assistent und strategische Sparringspartner von Hardy Engwer (IT/KI Consultant, Ortsvorsteher Glietz, Erzmarschall Berliner Rittergilde).
 
-Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, ÜBERSICHTLICHE Chat-Nachricht für Google Chat nach folgendem Muster:
+Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, STRUKTURIERTE und HANDLUNGSORIENTIERTE Nachricht für Google Chat:
 
-1. **Überschrift & Datum** (z. B. "☀️ **Daily Update (<Datum>) – Deine wichtigsten To-Dos:**")
-2. **Aktuelle Aufgaben & Deadlines** (nur die 3-5 wichtigsten Punkte aus dem Briefing / den erstellten Tasks)
-3. **🤖 Proaktive Unterstützung & nächste Schritte:**
-   Biete Hardy für 2-3 konkrete anstehende Aufgaben direkt deine Hilfe an. Sei spezifisch!
-   - z. B. "Soll ich einen Google Doc Entwurf für die Ratssitzung-Agenda am 11.10. erstellen (basierend auf den Telegram-Themen)?"
-   - z. B. "Soll ich den Antrag/Konzept für das LAG Oderland Regionalbudget 2027 vorbereiten?"
-   - z. B. "Möchtest du, dass ich dafür einen Kalendertermin einstelle oder den Entwurf in Telegram share?"
-4. **Schlusszeile:** Kurzer Hinweis wie: "Antworte einfach hier im Chat mit deiner Anweisung (z. B. 'Erstelle die Agenda', 'Termin machen' oder 'Telegram-Nachricht senden')."
+1. **Überschrift:** ☀️ **Daily To-Dos & Assistenz-Vorschläge (<Datum>)**
+2. **Aktuelle To-Dos:** Die 3-5 dringendsten Aufgaben & Deadlines aus den heutigen To-Dos / angelegten Tasks.
+3. **🤖 Konkrete Unterstützungsvorschläge:**
+   Mache für JEDES wesentliche To-Do einen konkreten, sofort umsetzbaren Vorschlag, wie DU als Assistent direkt die Arbeit abnehmen oder vorbereiten kannst:
+   - **BRG / Ratssitzung (z.B. 11.10.):** Biete an, einen vollständigen Entwurf für die Tagesordnung / Einladung als Google Doc in Drive anzulegen (unter Berücksichtigung der Geschäftsordnung, Protokolle & Telegram-Meldungen wie Mikaels Grafiken & Franks Vorschlag) und nach Freigabe den Link in den Telegram-Kanal "BRG Info" zu posten.
+   - **Ortsbeirat / Kommunales (z.B. LAG Oderland 15.10. / Dorfbudget / Solarpark):** Biete an, einen Konzept- oder Antragsentwurf als Google Doc vorzubereiten oder einen Kalendertermin einzustellen.
+   - **Administrative / Finanzthemen (z.B. Abrechnungen, Mails):** Biete an, Entwürfe oder Erinnerungen vorzubereiten.
+4. **Call to Action:** Erinnere Hardy kurz daran, dass er dir einfach direkt hier im Chat antworten kann (z. B. *"Erstelle die Agenda für die Ratssitzung als Doc"*, *"Bereite das LAG-Konzept vor"*, *"Poste Nachricht in Telegram"* etc.), damit du die Aktion sofort ausführst.
 
-STRENGES FORMAT:
+FORMATIERUNG:
 - Keine Tabellen!
-- Klar, prägnant, motivierend und direkt handlungsfähig.
+- Klare Bullet Points, prägnant, professionell und direkt aktionsfähig.
 
 BRIEFING-TO-DOS:
 ${todoSection}
 
-ANGELEGTE GOOGLE TASKS:
+HEUTE ERSTELLTE GOOGLE TASKS:
 ${taskList}`;
 
   try {
