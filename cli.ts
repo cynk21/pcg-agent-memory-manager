@@ -331,7 +331,7 @@ Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
   }
 }
 
-async function cmdChatProcess() {
+async function cmdChatProcess(): Promise<number> {
   const accessToken = await getAccessToken();
   const oauth2Client = getOAuth2Client(accessToken);
   const chat = google.chat({ version: 'v1', auth: oauth2Client });
@@ -357,12 +357,12 @@ async function cmdChatProcess() {
     saveChatState(newMax || new Date().toISOString());
     console.log('Initialer Chat-Stand gesetzt. Schicke eine Nachricht in den Raum und starte erneut:');
     console.log('npm run agent -- chat-process');
-    return;
+    return 0;
   }
 
   if (commands.length === 0) {
     console.log('Keine neuen Chat-Befehle gefunden.');
-    return;
+    return 0;
   }
 
   console.log(`${commands.length} neue Chat-Befehle gefunden. Verarbeite...`);
@@ -378,6 +378,32 @@ async function cmdChatProcess() {
     requestBody: { text: `${CHAT_MARKER} ${replies.join('\n\n')}` },
   });
   console.log('Antwort in den Chat-Raum gepostet.');
+  return commands.length;
+}
+
+async function cmdChatWatch() {
+  const intervalSec = Math.max(5, Number(process.env.CHAT_POLL_SECONDS || '15') || 15);
+  console.log(`\nChat-Watch gestartet: Polling alle ${intervalSec}s (Beenden mit Strg+C).`);
+  console.log('Schreibe einfach in den Google-Chat-Raum – der Agent liest, führt aus und antwortet.\n');
+
+  let consecutiveErrors = 0;
+  // Dauerschleife: Fehler eines einzelnen Ticks dürfen den Watcher nie beenden.
+  // Bei anhaltenden Fehlern (z. B. Netzwerk weg) wird das Intervall temporär gestreckt.
+  for (;;) {
+    try {
+      const processed = await cmdChatProcess();
+      consecutiveErrors = 0;
+      if (processed > 0) {
+        console.log(`[${new Date().toLocaleTimeString('de-DE')}] ${processed} Befehl(e) verarbeitet.`);
+      }
+    } catch (err: any) {
+      consecutiveErrors++;
+      console.warn(`[${new Date().toLocaleTimeString('de-DE')}] Chat-Watch Fehler (${consecutiveErrors}):`, err?.message || err);
+    }
+    const backoffFactor = Math.min(consecutiveErrors, 8); // max 8x Intervall bei Dauerfehlern
+    const waitMs = intervalSec * 1000 * Math.max(1, backoffFactor);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
 }
 
 async function cmdAuth(force: boolean) {
@@ -859,6 +885,7 @@ Chat-Rückkanal (Google Chat Bot):
   npm run agent -- chat-spaces         Chat-Räume auflisten (Raum-ID für .env)
   npm run agent -- chat-send "Text"    Nachricht in den konfigurierten Raum senden
   npm run agent -- chat-process        Neue Chat-Befehle lesen, ausführen, antworten
+  npm run agent -- chat-watch          Dauerlauf: Chat alle 15s pollen (CHAT_POLL_SECONDS in .env)
 
 Konfiguration in .env:
   GEMINI_API_KEY        Pflicht – für die KI
@@ -893,6 +920,7 @@ async function main() {
       case 'chat-spaces': return await cmdChatSpaces();
       case 'chat-send': return await cmdChatSend(args.slice(1).join(' '));
       case 'chat-process': return await cmdChatProcess();
+      case 'chat-watch': return await cmdChatWatch();
       case 'help':
       case '--help':
       case '-h': return printHelp();
