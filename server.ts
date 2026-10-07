@@ -2433,6 +2433,11 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
+  // Telegram-Session-Probleme dürfen nicht still untergehen: gut sichtbarer Hinweis im Briefing.
+  const telegramAuthBroken = /Telegram (nicht angemeldet|Authentifizierung abgelaufen)/i.test(telegramContext);
+  const telegramWarningBlock = telegramAuthBroken
+    ? `> ⚠️ **TELEGRAM-QUELLE AUSGEFALLEN:** Die Telegram-Session ist abgelaufen oder nicht eingerichtet. Dieses Briefing enthält KEINE Telegram-Nachrichten (BRG Info etc.). Bitte einmalig neu anmelden: \`npm run agent -- telegram-auth\`\n\n`
+    : '';
   const davidAgendaContext = extractDavidOneOnOneAgenda(tasksContext);
   const localMemoryContext = loadLocalMemoryContext();
   const currentSquadSignals = extractCurrentSquadSignals(enrichedDriveContext, chatsContext);
@@ -2606,6 +2611,9 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
     dateStr,
   );
   summary = ensureActionSectionTasks(summary, tasksContext, dateStr);
+  if (telegramWarningBlock) {
+    summary = telegramWarningBlock + summary;
+  }
 
   try {
     // Keep structured memory current on every daily run; operators can disable
@@ -2740,6 +2748,157 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   const result = { summary, emailSent, emailErrorMsg, emailMessageId, lastRunAt: new Date().toISOString(), dateStr, success: true, createdTasks };
   saveCronStatus(result);
   return result;
+}
+
+export async function performWeeklyReview(accessToken: string) {
+  const oauth2Client = getOAuth2Client(accessToken);
+  const dateStr = new Date().toISOString().split('T')[0];
+
+  console.log(`[Weekly Review] Performing weekly analysis for ${dateStr}...`);
+
+  const [
+    driveContext,
+    emailsContext,
+    eventsContext,
+    chatsContext,
+    telegramContext,
+    tasksContext
+  ] = await Promise.all([
+    fetchDriveContext(accessToken),
+    fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
+    fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
+    fetchRecentChats(oauth2Client, recordVerbatimEvidence),
+    fetchTelegramGroupMessages(recordVerbatimEvidence, 7),
+    fetchTasks(oauth2Client, recordVerbatimEvidence)
+  ]);
+  const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
+  const localMemoryContext = loadLocalMemoryContext();
+  const skillContext = loadSkillContext([
+    'workspace-context-ingestion',
+    'daily-management-briefing',
+    'project-and-customer-status',
+    'ortsbeirat-operations',
+    'brg-erzmarschall-operations',
+  ]);
+
+  const nowStr = new Date().toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' });
+
+  const prompt = `Erstelle einen fokussierten WOCHENRÜCKBLICK & WOCHENPLAN (Weekly Review) basierend auf allen verknüpften Quellen der letzten 7 Tage (Google Drive, E-Mails, Kalender, Google Chat, Telegram und Google Tasks).
+
+VERBINDLICHE SKILLS:
+${skillContext}
+
+WICHTIGE LAYOUT- & FORMATIERUNGSREGELN:
+- HEADER: Beginne direkt mit "# 📅 Wochenrückblick & Wochenplan (${nowStr})". Keine Executive Summary davor!
+- STRIKTES TABELLEN-VERBOT: Keine Markdown-Tabellen, nur Absätze und Bullet Points.
+- ANKLICKBARE QUELLEN-LINKS: Jede materielle Aussage mit Markdown-Direktlink belegen.
+- Private Coaching/Mentoring-Themen (inkl. Coaching J., Schwingdings) sowie "Thursdays for Data" stillschweigend und komplett ignorieren.
+- Keine Empfehlung ohne aktuelle Quellenbasis; keine abgeschlossenen Themen aus alten Quellen reaktivieren.
+
+FESTE STRUKTUR:
+
+# 📅 Wochenrückblick & Wochenplan (${nowStr})
+
+---
+
+## 1. ✅ Erledigt diese Woche
+- Abgeschlossene Aufgaben, Beschlüsse, versendete Antworten (aus Tasks mit Status erledigt, Protokollen, Mails). Je Punkt eine Zeile + Quelle.
+
+## 2. ⏳ Liegengeblieben / Überfällig
+- Offene Tasks mit überschrittener oder dieser Woche fälliger Deadline, unbeantwortete wichtige Mails, unerledigte Beschlüsse aus Ratsprotokollen. Je Punkt: Was, seit wann, empfohlener nächster Schritt + Quelle.
+
+## 3. 🏰 BRG / Erzmarschall – Wochenstand
+- Fortschritt bei Servantenreform, Ratsreform, Feldscher-System, Sergeanten/Akademie; neue Themenmeldungen aus Telegram (BRG Info) als Kandidaten für die nächste Ratssitzung.
+
+## 4. 🏘️ Ortsbeirat & Kommunales – Wochenstand
+- Dorfbudget, Förderprogramme (LEADER/LAG-Fristen!), Bürgeranliegen, Solarpark.
+
+## 5. 🎯 Plan für die kommende Woche
+- Maximal 7 priorisierte Punkte mit konkretem erstem Schritt und Zieltermin. Anstehende Kalendertermine der nächsten 7 Tage berücksichtigen.
+
+--- QUELLEN ---
+
+--- GOOGLE DRIVE (DOKUMENTE & PROTOKOLLE) ---
+${enrichedDriveContext}
+
+--- E-MAILS ---
+${emailsContext}
+
+--- KALENDER ---
+${eventsContext}
+
+--- CHATS & GOOGLE CHAT ---
+${chatsContext}
+
+--- TELEGRAM (AKTIVE CHATS) ---
+${telegramContext}
+
+--- GOOGLE TASKS (AUTORITATIVER STATUS) ---
+${tasksContext}
+
+--- LOKALES STRUKTURIERTES GEDÄCHTNIS ---
+${localMemoryContext}
+`;
+
+  const response = await generateAIContent({ contents: prompt });
+  const summary = response.text || 'Kein Weekly Review generiert.';
+
+  // In Drive speichern (fail-safe)
+  try {
+    const drive = await getDriveClient(accessToken);
+    const fileName = `Weekly_Review_${dateStr}.md`;
+    const res = await drive.files.list({
+      q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
+      fields: 'files(id)'
+    });
+    const files = res.data.files || [];
+    const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
+    const media = { mimeType: 'text/markdown', body: summary };
+    if (files.length > 0) {
+      await drive.files.update({ fileId: files[0].id, media: media });
+    } else {
+      await drive.files.create({ requestBody: fileMetadata, media: media });
+    }
+  } catch (driveErr: any) {
+    console.error('Could not save weekly review to Google Drive:', driveErr?.message || driveErr);
+  }
+
+  // E-Mail senden
+  let emailSent = false;
+  let emailErrorMsg: string | null = null;
+  try {
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const profileRes = await gmail.users.getProfile({ userId: 'me' });
+    const emailAddress = profileRes.data.emailAddress;
+    if (emailAddress) {
+      const cleanEmailContent = cleanContentForEmail(summary);
+      const utf8Subject = `=?utf-8?B?${Buffer.from(`PCG Agent Weekly Review - ${dateStr}`).toString('base64')}?=`;
+      const encodedBody = Buffer.from(cleanEmailContent, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
+      const messageParts = [
+        `From: ${emailAddress}`,
+        `To: ${emailAddress}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        'MIME-Version: 1.0',
+        `Subject: ${utf8Subject}`,
+        '',
+        encodedBody,
+      ];
+      const encodedMessage = Buffer.from(messageParts.join('\r\n'))
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+      await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage } });
+      console.log('Weekly review email sent successfully to', emailAddress);
+      emailSent = true;
+    }
+  } catch (emailError: any) {
+    console.error('Failed to send weekly review email:', emailError?.message || emailError);
+    emailErrorMsg = emailError?.message || String(emailError);
+  }
+
+  return { summary, emailSent, emailErrorMsg, dateStr, success: true };
 }
 
 app.get('/api/cron/status', (req, res) => {

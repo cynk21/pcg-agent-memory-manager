@@ -10,7 +10,34 @@ const SESSION_FILE = path.join(process.cwd(), '.telegram_session.json');
 // Limits, damit ein einzelner riesiger Chat den Daily nicht sprengt
 const MAX_DIALOGS = 50;
 const MAX_MESSAGES_PER_DIALOG = 100;
+const MAX_MESSAGES_PER_LOW_PRIORITY_DIALOG = 25;
 const MAX_TOTAL_MESSAGES = 600;
+
+/** Chats, die komplett ignoriert werden (Komma-getrennt in .env, Teilstring-Match, case-insensitive). */
+function getExcludedChatPatterns(): string[] {
+  return (process.env.TELEGRAM_EXCLUDE_CHATS || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** Priorisierte Chats zuerst und mit vollem Nachrichtenlimit (Default: BRG- und Rats-Chats). */
+function getPriorityChatPatterns(): string[] {
+  const raw = process.env.TELEGRAM_PRIORITY_CHATS || 'BRG,Rat,Gilde,Komtur,Feldscher,Ortsbeirat,Glietz';
+  return raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+}
+
+function isExcludedChat(title: string, excludePatterns: string[]): boolean {
+  const t = title.toLowerCase();
+  // Telegram-Service-Chat (Login-Codes, Service-Nachrichten) immer ausschliessen
+  if (t === 'telegram' || t === 'telegram notifications') return true;
+  return excludePatterns.some(p => t.includes(p));
+}
+
+function isPriorityChat(title: string, priorityPatterns: string[]): boolean {
+  const t = title.toLowerCase();
+  return priorityPatterns.some(p => t.includes(p));
+}
 
 export function loadTelegramSessionString(): string {
   if (process.env.TELEGRAM_SESSION) return process.env.TELEGRAM_SESSION.trim();
@@ -79,11 +106,22 @@ export async function fetchTelegramGroupMessages(
     const cutoffUnix = Math.floor(cutoffDate.getTime() / 1000);
 
     // Nur Hauptordner (folderId 0/undefined) = aktive Chats; Archiv hat folderId 1.
+    const excludePatterns = getExcludedChatPatterns();
+    const priorityPatterns = getPriorityChatPatterns();
     const dialogs: any[] = await client.getDialogs({ limit: 200 });
     const activeDialogs = dialogs
       .filter((d: any) => !d.archived && (d.folderId === undefined || d.folderId === null || d.folderId === 0))
       // Nur Chats mit Aktivität im Zeitfenster (letzte Nachricht neuer als Cutoff)
       .filter((d: any) => (d.date || 0) >= cutoffUnix)
+      // Ausschlussliste (TELEGRAM_EXCLUDE_CHATS in .env)
+      .filter((d: any) => !isExcludedChat(d.title || d.name || '', excludePatterns))
+      // Prioritäts-Chats (BRG, Rat, ...) zuerst, danach nach Aktualität
+      .sort((a: any, b: any) => {
+        const aPrio = isPriorityChat(a.title || a.name || '', priorityPatterns) ? 1 : 0;
+        const bPrio = isPriorityChat(b.title || b.name || '', priorityPatterns) ? 1 : 0;
+        if (aPrio !== bPrio) return bPrio - aPrio;
+        return (b.date || 0) - (a.date || 0);
+      })
       .slice(0, MAX_DIALOGS);
 
     if (activeDialogs.length === 0) {
@@ -100,9 +138,11 @@ export async function fetchTelegramGroupMessages(
 
       const chatTitle = dialog.title || dialog.name || 'Unbenannter Chat';
       const entity = dialog.entity;
+      const prio = isPriorityChat(chatTitle, priorityPatterns);
+      const perDialogLimit = prio ? MAX_MESSAGES_PER_DIALOG : MAX_MESSAGES_PER_LOW_PRIORITY_DIALOG;
       let messages: any[] = [];
       try {
-        messages = await client.getMessages(entity, { limit: MAX_MESSAGES_PER_DIALOG });
+        messages = await client.getMessages(entity, { limit: perDialogLimit });
       } catch (dialogErr: any) {
         console.warn(`Telegram: Chat "${chatTitle}" konnte nicht gelesen werden:`, dialogErr?.message || dialogErr);
         continue;

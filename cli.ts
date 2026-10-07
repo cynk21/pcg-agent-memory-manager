@@ -21,6 +21,7 @@ import {
   fetchTelegramGroupMessages,
   fetchDriveKnowledgeBaseContext,
   performDailyUpdate,
+  performWeeklyReview,
   createGoogleTaskDirect,
   getOAuth2Client,
   cleanContentForEmail,
@@ -609,6 +610,23 @@ async function cmdDaily() {
   }
 }
 
+async function cmdWeekly(force: boolean = false) {
+  // Weekly Review läuft nur freitags (Europe/Berlin); --force übersteuert für manuelle Läufe.
+  const weekday = new Date().toLocaleDateString('de-DE', { weekday: 'long', timeZone: 'Europe/Berlin' });
+  if (weekday !== 'Freitag' && !force) {
+    console.log(`\nWeekly Review wird nur freitags ausgeführt (heute: ${weekday}). Übersprungen.`);
+    console.log('Manueller Lauf: npm run agent -- weekly --force\n');
+    return;
+  }
+  const accessToken = await getAccessToken();
+  console.log('\nStarte Weekly Review (Wochenrückblick -> Gemini -> Drive -> E-Mail)...\n');
+  const result = await performWeeklyReview(accessToken);
+  console.log('\n--- Weekly Review ---');
+  console.log(result.summary);
+  console.log(`\nE-Mail gesendet: ${result.emailSent ? 'ja' : 'nein'}${result.emailErrorMsg ? ' - ' + result.emailErrorMsg : ''}`);
+  console.log(`Datum: ${result.dateStr}\n`);
+}
+
 async function cmdTodos() {
   const accessToken = await getAccessToken();
   const oauth2Client = getOAuth2Client(accessToken);
@@ -826,6 +844,7 @@ PCG Agent CLI – Befehle:
   npm run agent -- telegram-auth       Einmalige Telegram-Anmeldung (MTProto Session -> .telegram_session.json)
   npm run agent -- status              Status von Tokens & letztem Daily-Run
   npm run agent -- daily               Tägliches Update (Tasks anlegen, Drive-Briefing, E-Mail)
+  npm run agent -- weekly [--force]    Wochenrückblick & Wochenplan (läuft nur freitags; --force erzwingt)
   npm run agent -- todos               Google Tasks auflisten
   npm run agent -- task "Titel" [--due YYYY-MM-DD] [--notes "Notiz"]
   npm run agent -- email --to x@y.de --subject "Betreff" --body "Text"
@@ -861,6 +880,7 @@ async function main() {
       case 'telegram-auth': return await cmdTelegramAuth();
       case 'status': return await cmdStatus();
       case 'daily': return await cmdDaily();
+      case 'weekly': return await cmdWeekly(args.includes('--force'));
       case 'todos': return await cmdTodos();
       case 'task': return await cmdTask(args.slice(1));
       case 'email': return await cmdEmail(args.slice(1));
