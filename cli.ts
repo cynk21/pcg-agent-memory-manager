@@ -381,6 +381,33 @@ Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
           .replace(/^\*\s+/gm, '- '); // Vereinheitliche Aufzählungen
 
         const media = { mimeType: 'text/plain', body: content };
+
+        // Deduplizierungs-Prüfung: Prüfe ob heute bereits ein Dokument mit exakt diesem Namen existiert
+        let existingFile: any = null;
+        try {
+          const searchParentQuery = driveFolderId ? `'${driveFolderId}' in parents and ` : '';
+          const existingRes = await drive.files.list({
+            q: `${searchParentQuery}name = '${docTitle.replace(/'/g, "\\'")}' and trashed = false and mimeType = 'application/vnd.google-apps.document'`,
+            fields: 'files(id, name, webViewLink, modifiedTime)',
+            orderBy: 'modifiedTime desc',
+            pageSize: 1,
+          });
+          if (existingRes.data.files && existingRes.data.files.length > 0) {
+            existingFile = existingRes.data.files[0];
+          }
+        } catch (searchErr) {
+          console.warn('[drive_doc] Prüfung auf existierende Datei fehlgeschlagen:', searchErr);
+        }
+
+        if (existingFile) {
+          // Vorhandenes Dokument aktualisieren statt ein Duplikat anzulegen
+          const updateRes = await drive.files.update({
+            fileId: existingFile.id,
+            media,
+            fields: 'id, name, webViewLink',
+          });
+          return `📄 Google Doc aktualisiert: "${updateRes.data.name || docTitle}" (bestehendes Dokument überschrieben, keine Dublette)\n🔗 Link: ${updateRes.data.webViewLink || existingFile.webViewLink || 'in Google Drive gespeichert'}`;
+        }
         
         let res: any;
         if (driveFolderId) {
@@ -499,9 +526,11 @@ async function cmdChatProcess(): Promise<number> {
   }
 
   if (commands.length === 0) {
-    console.log('Keine neuen Chat-Befehle gefunden.');
     return 0;
   }
+
+  // WICHTIG: Stand SOFORT absichern, damit parallele Polling-Ticks denselben Befehl niemals doppelt verarbeiten!
+  if (newMax) saveChatState(newMax);
 
   console.log(`${commands.length} neue Chat-Befehle gefunden. Verarbeite...`);
   const replies: string[] = [];
@@ -510,7 +539,6 @@ async function cmdChatProcess(): Promise<number> {
     replies.push(await processChatCommand(cmd.text, accessToken, oauth2Client));
   }
 
-  if (newMax) saveChatState(newMax);
   await chat.spaces.messages.create({
     parent: spaceId,
     requestBody: { text: `${CHAT_MARKER} ${replies.join('\n\n')}` },
