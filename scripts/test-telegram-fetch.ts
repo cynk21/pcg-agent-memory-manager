@@ -3,6 +3,8 @@ import { fetchTelegramGroupMessages } from '../src/server/telegram-reader.ts';
 
 const result = await fetchTelegramGroupMessages();
 const lines = result.split('\n').filter(Boolean);
-console.log(`--- Ergebnis: ${lines.length} Zeilen ---`);
-console.log(lines.slice(0, 5).join('\n'));
-if (lines.length > 5) console.log(`... (${lines.length - 5} weitere Zeilen)`);
+const chats = lines.filter(l => l.startsWith('## Chat:'));
+console.log(`--- Ergebnis: ${lines.length} Zeilen, ${chats.length} Chats ---`);
+console.log(chats.join('\n'));
+console.log('--- Erste Nachrichten ---');
+console.log(lines.filter(l => l.startsWith('- ')).slice(0, 3).join('\n'));

@@ -2429,7 +2429,7 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
-    fetchTelegramGroupMessages(recordVerbatimEvidence, /BRG\s*Info/i, 7),
+    fetchTelegramGroupMessages(recordVerbatimEvidence, 7),
     fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
