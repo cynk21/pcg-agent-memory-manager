@@ -269,11 +269,11 @@ Antworte IMMER im Format:
 </ACTION>
 
 Aktionen & Richtlinien:
-1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive.
+1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive mit professioneller Typografie (Überschriften, Listen, Infoboxen).
    - title: z. B. "Agenda Ratssitzung 11.10.2026"
-   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8) in sauberem Fließtext (ohne Markdown-Artefakte wie ##, ** oder *, sondern lesbare Nummerierung 1., 2., 3., Spiegelstriche - / • und klare Einrückungen):
+   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8). Du kannst entweder sauberen Text mit Nummerierung (1., 2., 3.) ODER direkt semantisches HTML (<h1>, <h2>, <p>, <ul>, <li>, <strong>) liefern.
      
-     MUSTER DER AGENDA:
+     STRUKTUR DER AGENDA:
      Agenda der Ratssitzung (Online)
      Datum: Sonntag, [Datum], [Uhrzeit]
      Protokoll-Referenz: Sitzung vom [Datum der letzten Sitzung]
@@ -370,17 +370,53 @@ Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
       }
       case 'drive_doc': {
         const drive = await getDriveClient(token);
-        // Clean title (keine .md Endung im Titel bei echten Google Docs)
         const docTitle = (action.title || 'Neues Dokument').replace(/\.(md|txt|docx?)$/i, '');
-        let content = action.content || action.body || action.notes || 'Inhalt';
-        // Falls Markdown-Artefakte vorhanden sind, für Google Docs bereinigen
-        content = content
-          .replace(/^#{1,6}\s+/gm, '') // Entferne ### Header-Marker
-          .replace(/\*\*([^*]+)\*\*/g, '$1') // Entferne **fett**
-          .replace(/__([^_]+)__/g, '$1')
-          .replace(/^\*\s+/gm, '- '); // Vereinheitliche Aufzählungen
+        const rawContent = action.content || action.body || action.notes || 'Inhalt';
 
-        const media = { mimeType: 'text/plain', body: content };
+        // Konvertiere strukturierten Text / HTML sauber in formatiertes HTML für Google Docs:
+        const formattedHtml = rawContent.includes('<html') || rawContent.includes('<body')
+          ? rawContent
+          : `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; line-height: 1.45; color: #222222; }
+  h1 { font-size: 16pt; font-weight: bold; color: #1a365d; margin-top: 0; margin-bottom: 6px; }
+  .meta-box { background-color: #f7fafc; border-left: 4px solid #3182ce; padding: 8px 12px; margin-bottom: 16px; font-size: 10.5pt; color: #4a5568; }
+  h2 { font-size: 13pt; font-weight: bold; color: #2b6cb0; margin-top: 18px; margin-bottom: 6px; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; }
+  h3 { font-size: 11.5pt; font-weight: bold; color: #2d3748; margin-top: 10px; margin-bottom: 4px; }
+  p { margin-top: 4px; margin-bottom: 6px; }
+  ul { margin-top: 4px; margin-bottom: 8px; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  .top-badge { display: inline-block; background-color: #ebf8ff; color: #2b6cb0; font-weight: bold; font-size: 9.5pt; padding: 2px 6px; border-radius: 3px; margin-bottom: 4px; }
+  .highlight-box { background-color: #f7fafc; padding: 8px 12px; border-radius: 4px; margin: 6px 0; border: 1px solid #e2e8f0; }
+</style>
+</head>
+<body>
+${rawContent
+  .split('\n\n')
+  .map(block => {
+    const trimmed = block.trim();
+    if (!trimmed) return '';
+    if (/^(#|Agenda der Ratssitzung)/i.test(trimmed)) {
+      const cleanH1 = trimmed.replace(/^#\s*/, '');
+      return `<h1>${cleanH1}</h1>`;
+    }
+    if (/^(\d+\.|\bTOP\s+\d+:)/i.test(trimmed) && !trimmed.includes('\n')) {
+      return `<h2>${trimmed}</h2>`;
+    }
+    if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ')) {
+      const items = trimmed.split('\n').map(l => l.replace(/^[-*•]\s+/, '').trim()).filter(Boolean);
+      return `<ul>${items.map(i => `<li>${i.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')}</li>`).join('')}</ul>`;
+    }
+    return `<p>${trimmed.replace(/\n/g, '<br>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')}</p>`;
+  })
+  .join('\n')}
+</body>
+</html>`;
+
+        const media = { mimeType: 'text/html', body: formattedHtml };
 
         // Deduplizierungs-Prüfung: Prüfe ob heute bereits ein Dokument mit exakt diesem Namen existiert
         let existingFile: any = null;
@@ -406,7 +442,7 @@ Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
             media,
             fields: 'id, name, webViewLink',
           });
-          return `📄 Google Doc aktualisiert: "${updateRes.data.name || docTitle}" (bestehendes Dokument überschrieben, keine Dublette)\n🔗 Link: ${updateRes.data.webViewLink || existingFile.webViewLink || 'in Google Drive gespeichert'}`;
+          return `📄 Google Doc formatiert & aktualisiert: "${updateRes.data.name || docTitle}" (bestehendes Dokument aktualisiert)\n🔗 Link: ${updateRes.data.webViewLink || existingFile.webViewLink || 'in Google Drive gespeichert'}`;
         }
         
         let res: any;
@@ -439,7 +475,7 @@ Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
           });
         }
 
-        return `📄 Google Doc erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || 'in Google Drive gespeichert'}`;
+        return `📄 Google Doc formatiert & erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || 'in Google Drive gespeichert'}`;
       }
       case 'telegram_send': {
         const target = action.targetChat || 'BRG Info';
