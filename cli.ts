@@ -24,11 +24,13 @@ import {
   performWeeklyReview,
   createGoogleTaskDirect,
   getOAuth2Client,
+  getDriveClient,
+  driveFolderId,
   cleanContentForEmail,
   generateAIContent,
   formatAIError,
 } from './server.ts';
-import { loadTelegramSessionString, saveTelegramSessionString } from './src/server/telegram-reader.ts';
+import { loadTelegramSessionString, saveTelegramSessionString, sendTelegramMessage } from './src/server/telegram-reader.ts';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { searchVerbatimEvidence } from './verbatim-evidence-ledger.ts';
@@ -238,30 +240,53 @@ async function cmdChatSend(text: string) {
 }
 
 async function processChatCommand(text: string, token: string, oauth2Client: any): Promise<string> {
-  const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde). Interpretiere die folgende Chat-Nachricht von Hardy und übersetze sie in GENAU EIN JSON-Aktionsobjekt. Antworte ausschließlich mit:
+  const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent und Sparringspartner von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde).
 
+Analysiere Hardys Chat-Nachricht genau und entscheide, ob es sich um:
+A) Eine konkrete System-Aktion (Task, Termin, E-Mail, Doc-Erstellung, Telegram-Post etc.) handelt, ODER
+B) Eine Frage, Bitte um Unterstützung, Recherche, Vorbereitung oder Konzeptionierung.
+
+Antworte IMMER im Format:
 <ACTION>
- { "action": "task" | "calendar" | "email" | "todos" | "status" | "daily", "title": "", "notes": "", "dueDate": "", "startTime": "", "to": "", "subject": "", "body": "" }
+{
+  "action": "task" | "calendar" | "email" | "drive_doc" | "telegram_send" | "todos" | "status" | "daily" | "weekly" | "assist",
+  "title": "",
+  "notes": "",
+  "dueDate": "",
+  "startTime": "",
+  "to": "",
+  "subject": "",
+  "body": "",
+  "content": "",
+  "targetChat": "",
+  "reply": ""
+}
 </ACTION>
 
-Regeln:
-- task: Aufgabe in Google Tasks anlegen. title = Aufgabe, dueDate als YYYY-MM-DD (falls genannt, sonst leer), notes = Details.
-- calendar: Kalendertermin anlegen. title = Titel, startTime = "YYYY-MM-DDTHH:MM:SS" (aus der Nachricht ableiten).
-- email: E-Mail senden. to, subject, body füllen. to leer lassen, wenn nicht genannt (dann wird es an Hardy selbst gesendet).
-- todos: Liste der offenen Google Tasks ausgeben (keine weiteren Felder nötig).
-- status: Status des letzten Daily-Updates ausgeben.
-- daily: Das komplette tägliche Update (Briefing + Tasks + E-Mail) jetzt auslösen.
-- Wenn die Absicht unklar ist, wähle action="todos".
-Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
+Aktionen & Regeln:
+1. "task": Aufgabe in Google Tasks anlegen. title = Aufgabe, dueDate = YYYY-MM-DD (falls genannt), notes = Details.
+2. "calendar": Kalendertermin anlegen. title = Titel, startTime = ISO-Format (z. B. "2026-10-10T14:00:00").
+3. "email": E-Mail senden. to (leer = an Hardy selbst), subject, body.
+4. "drive_doc": Ein neues Dokument / Agenda / Konzept direkt in Google Drive erstellen. title = Dateiname (z. B. "Agenda_Ratssitzung_11_10_2026.md"), content = Der vollständige, strukturierte Text des Dokuments.
+5. "telegram_send": Eine Nachricht in einen Telegram-Chat posten (z. B. "BRG Info" oder Namen). targetChat = Name/Pattern des Chats (z. B. "BRG Info"), body = Der Nachrichtentext.
+6. "todos": Liste der offenen Google Tasks anzeigen.
+7. "status": Status des letzten Daily-Updates anzeigen.
+8. "daily": Das komplette tägliche Update jetzt auslösen.
+9. "weekly": Den Wochenrückblick jetzt auslösen.
+10. "assist": Wenn Hardy eine allgemeine Frage stellt, nach Rat/Konzept fragt oder Unterstützung wünscht, die keine automatische System-Mutation ist. reply = Deine ausführliche, kompetente, strukturierte und proaktive Antwort an Hardy.
+
+Antworte NUR mit dem <ACTION>-Block, kein überflüssiger Text drumherum.`;
 
   const response = await generateAIContent({
     contents: `Chat-Nachricht von Hardy: ${text}`,
-    config: { temperature: 0.0, systemInstruction },
+    config: { temperature: 0.1, systemInstruction },
   });
 
   const raw = (response.text || '').trim();
   const match = raw.match(/<ACTION>([\s\S]*?)<\/ACTION>/);
-  if (!match) return `Konnte Befehl nicht interpretieren: "${text}"`;
+  if (!match) {
+    return response.text || `Konnte Befehl nicht interpretieren: "${text}"`;
+  }
 
   let action: any;
   try {
@@ -275,22 +300,41 @@ Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
     switch (action.action) {
       case 'task': {
         const r = await createGoogleTaskDirect(action.title, action.notes || '', action.dueDate || '', token);
-        return `Task erstellt: ${action.title}${r.id ? ` (ID: ${r.id})` : ''}`;
+        return `✅ Task erstellt: ${action.title}${r.id ? ` (ID: ${r.id})` : ''}${action.dueDate ? ` | Fällig: ${action.dueDate}` : ''}`;
       }
       case 'calendar': {
         const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
         const start = new Date(action.startTime);
-        if (isNaN(start.getTime())) return `Ungültige Zeit: ${action.startTime}`;
+        if (isNaN(start.getTime())) return `Ungültige Zeitangabe: ${action.startTime}`;
         const end = new Date(start.getTime() + 60 * 60000);
         const created = await calendar.events.insert({
           calendarId: 'primary',
           requestBody: {
             summary: action.title,
+            description: action.notes || '',
             start: { dateTime: start.toISOString() },
             end: { dateTime: end.toISOString() },
           },
         });
-        return `Termin erstellt: ${action.title} (${action.startTime}, ID: ${created.data.id})`;
+        return `📅 Termin erstellt: "${action.title}" (${start.toLocaleString('de-DE')}, Link: ${created.data.htmlLink || 'in Kalender eingetragen'})`;
+      }
+      case 'drive_doc': {
+        const drive = await getDriveClient(token);
+        const fileName = action.title?.endsWith('.md') ? action.title : `${action.title || 'Dokument'}.md`;
+        const content = action.content || action.body || action.notes || '# Neues Dokument';
+        const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
+        const media = { mimeType: 'text/markdown', body: content };
+        const res = await drive.files.create({ requestBody: fileMetadata, media, fields: 'id, name, webViewLink' });
+        return `📄 Google Drive Dokument erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || `Drive Folder ID: ${driveFolderId}`}`;
+      }
+      case 'telegram_send': {
+        const target = action.targetChat || 'BRG Info';
+        const msgText = action.body || action.content || action.text || '';
+        if (!msgText) return 'Kein Nachrichtentext für Telegram angegeben.';
+        const tgRes = await sendTelegramMessage(target, msgText);
+        return tgRes.success
+          ? `💬 Telegram: ${tgRes.message}`
+          : `⚠️ Telegram-Fehler: ${tgRes.message}`;
       }
       case 'email': {
         const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
@@ -307,7 +351,7 @@ Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
         ].join('\r\n');
         const encoded = Buffer.from(body).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
         await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encoded } });
-        return `E-Mail gesendet an ${to}: ${action.subject}`;
+        return `✉️ E-Mail gesendet an ${to}: "${action.subject}"`;
       }
       case 'status': {
         const cron = getCronStatus();
@@ -317,8 +361,15 @@ Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
       }
       case 'daily': {
         const result = await performDailyUpdate(token, true, { autoCreateTasks: true });
-        const tasks = (result.createdTasks || []).map((t) => `${t.error ? 'FEHLER' : 'OK'}: ${t.title}`).join('\n') || 'keine';
-        return `Daily-Update abgeschlossen (${result.dateStr}).\nErstellte Tasks:\n${tasks}\nE-Mail: ${result.emailSent ? 'gesendet' : 'fehlgeschlagen'}.`;
+        const proactiveMsg = await generateDailyChatProactiveMessage(result.summary, result.createdTasks);
+        return proactiveMsg;
+      }
+      case 'weekly': {
+        const result = await performWeeklyReview(token);
+        return `📅 Weekly Review abgeschlossen (${result.dateStr}).\nE-Mail: ${result.emailSent ? 'gesendet' : 'fehlgeschlagen'}.`;
+      }
+      case 'assist': {
+        return action.reply || response.text || 'Wie kann ich dich bei dieser Aufgabe unterstützen?';
       }
       case 'todos':
       default: {
@@ -621,15 +672,15 @@ async function cmdDaily() {
   if (process.env.CHAT_SPACE_ID) {
     try {
       const chat = google.chat({ version: 'v1', auth: getOAuth2Client(accessToken) });
-      const todoSection = extractDailyTodoSection(result.summary);
-      const chunks = splitChatMessage(cleanContentForEmail(todoSection));
+      const proactiveMsg = await generateDailyChatProactiveMessage(result.summary, result.createdTasks);
+      const chunks = splitChatMessage(cleanContentForEmail(proactiveMsg));
       for (const [index, chunk] of chunks.entries()) {
         await chat.spaces.messages.create({
           parent: getChatSpaceId(),
-          requestBody: { text: `${CHAT_MARKER} Daily-Update ${result.dateStr} (${index + 1}/${chunks.length})\n\n${chunk}` },
+          requestBody: { text: chunks.length > 1 ? `${CHAT_MARKER} (${index + 1}/${chunks.length})\n\n${chunk}` : `${CHAT_MARKER} ${chunk}` },
         });
       }
-      console.log(`Briefing in ${chunks.length} Teilen nach Google Chat gepostet.`);
+      console.log(`Proaktives To-Do Briefing in ${chunks.length} Teilen nach Google Chat gepostet.`);
     } catch (chatErr: any) {
       console.warn('Chat-Post fehlgeschlagen:', chatErr?.message || chatErr);
     }
@@ -860,6 +911,47 @@ function flagValue(args: string[], name: string): string | undefined {
 function extractDailyTodoSection(summary: string): string {
   const sectionMatch = summary.match(/## 6\.\s+[^\n]+[\s\S]*?(?=\n<ACTION_PROPOSALS>|$)/i);
   return sectionMatch?.[0]?.trim() || '## Handlungsempfehlungen\n\nKeine aktuellen To-Dos gefunden.';
+}
+
+async function generateDailyChatProactiveMessage(summary: string, createdTasks: { title: string; id?: string; error?: string }[] = []): Promise<string> {
+  const todoSection = extractDailyTodoSection(summary);
+  const taskList = createdTasks.length > 0
+    ? createdTasks.map(t => `- [ ] ${t.title}`).join('\n')
+    : '(Keine neuen Tasks heute angelegt)';
+
+  const prompt = `Du bist der PCG Agent Memory Manager, der proaktive persönliche Assistent von Hardy Engwer (IT/KI Consultant, Ortsvorsteher Glietz, Erzmarschall Berliner Rittergilde).
+
+Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, ÜBERSICHTLICHE Chat-Nachricht für Google Chat nach folgendem Muster:
+
+1. **Überschrift & Datum** (z. B. "☀️ **Daily Update (<Datum>) – Deine wichtigsten To-Dos:**")
+2. **Aktuelle Aufgaben & Deadlines** (nur die 3-5 wichtigsten Punkte aus dem Briefing / den erstellten Tasks)
+3. **🤖 Proaktive Unterstützung & nächste Schritte:**
+   Biete Hardy für 2-3 konkrete anstehende Aufgaben direkt deine Hilfe an. Sei spezifisch!
+   - z. B. "Soll ich einen Google Doc Entwurf für die Ratssitzung-Agenda am 11.10. erstellen (basierend auf den Telegram-Themen)?"
+   - z. B. "Soll ich den Antrag/Konzept für das LAG Oderland Regionalbudget 2027 vorbereiten?"
+   - z. B. "Möchtest du, dass ich dafür einen Kalendertermin einstelle oder den Entwurf in Telegram share?"
+4. **Schlusszeile:** Kurzer Hinweis wie: "Antworte einfach hier im Chat mit deiner Anweisung (z. B. 'Erstelle die Agenda', 'Termin machen' oder 'Telegram-Nachricht senden')."
+
+STRENGES FORMAT:
+- Keine Tabellen!
+- Klar, prägnant, motivierend und direkt handlungsfähig.
+
+BRIEFING-TO-DOS:
+${todoSection}
+
+ANGELEGTE GOOGLE TASKS:
+${taskList}`;
+
+  try {
+    const response = await generateAIContent({
+      contents: prompt,
+      config: { temperature: 0.2 },
+    });
+    return (response.text || todoSection).trim();
+  } catch (err: any) {
+    console.warn('Fehler bei der Generierung des proaktiven Chat-Briefings:', err?.message || err);
+    return `${todoSection}\n\n🤖 *Wie kann ich dich heute bei diesen Aufgaben unterstützen? Antworte einfach hier im Chat.*`;
+  }
 }
 
 function printHelp() {

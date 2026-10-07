@@ -66,6 +66,47 @@ async function shutdownClient(client: TelegramClient): Promise<void> {
   try { await client.destroy(); } catch { /* ignore */ }
 }
 
+export async function sendTelegramMessage(chatTitleOrPattern: string | RegExp, text: string): Promise<{ success: boolean; message: string; chatId?: string }> {
+  const apiIdStr = process.env.TELEGRAM_API_ID;
+  const apiHash = process.env.TELEGRAM_API_HASH;
+  const sessionStr = loadTelegramSessionString();
+
+  if (!apiIdStr || !apiHash || !sessionStr) {
+    return { success: false, message: 'Telegram nicht konfiguriert oder nicht angemeldet.' };
+  }
+
+  const apiId = Number(apiIdStr);
+  const stringSession = new StringSession(sessionStr);
+  const client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 3 });
+  installGramJsTimeoutGuard();
+
+  try {
+    await client.connect();
+    if (!await client.isUserAuthorized()) {
+      await shutdownClient(client);
+      return { success: false, message: 'Telegram Authentifizierung abgelaufen.' };
+    }
+
+    const dialogs: any[] = await client.getDialogs({ limit: 100 });
+    const pattern = typeof chatTitleOrPattern === 'string'
+      ? new RegExp(chatTitleOrPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+      : chatTitleOrPattern;
+
+    const target = dialogs.find((d: any) => pattern.test(d.title || d.name || ''));
+    if (!target) {
+      await shutdownClient(client);
+      return { success: false, message: `Kein Telegram-Chat gefunden, der auf "${chatTitleOrPattern}" passt.` };
+    }
+
+    await client.sendMessage(target.entity, { message: text });
+    await shutdownClient(client);
+    return { success: true, message: `Nachricht erfolgreich an "${target.title || target.name}" gesendet.`, chatId: String(target.id) };
+  } catch (err: any) {
+    await shutdownClient(client);
+    return { success: false, message: `Fehler beim Senden der Telegram-Nachricht: ${err?.message || err}` };
+  }
+}
+
 export function loadTelegramSessionString(): string {
   if (process.env.TELEGRAM_SESSION) return process.env.TELEGRAM_SESSION.trim();
   if (fs.existsSync(SESSION_FILE)) {
