@@ -322,10 +322,20 @@ Antworte NUR mit dem <ACTION>-Block, kein überflüssiger Text drumherum.`;
         const drive = await getDriveClient(token);
         const fileName = action.title?.endsWith('.md') ? action.title : `${action.title || 'Dokument'}.md`;
         const content = action.content || action.body || action.notes || '# Neues Dokument';
-        const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
         const media = { mimeType: 'text/markdown', body: content };
-        const res = await drive.files.create({ requestBody: fileMetadata, media, fields: 'id, name, webViewLink' });
-        return `📄 Google Drive Dokument erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || `Drive Folder ID: ${driveFolderId}`}`;
+        
+        let res: any;
+        try {
+          // Versuche zuerst den konfigurierten Zielordner (falls vorhanden & beschreibbar)
+          const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
+          res = await drive.files.create({ requestBody: fileMetadata, media, fields: 'id, name, webViewLink' });
+        } catch (folderErr: any) {
+          console.warn(`Drive Folder "${driveFolderId}" nicht beschreibbar oder nicht gefunden (${folderErr?.message || folderErr}). Speichere im Drive Root.`);
+          const fallbackMetadata = { name: fileName, mimeType: 'text/markdown' };
+          res = await drive.files.create({ requestBody: fallbackMetadata, media, fields: 'id, name, webViewLink' });
+        }
+
+        return `📄 Google Drive Dokument erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || 'in Google Drive gespeichert'}`;
       }
       case 'telegram_send': {
         const target = action.targetChat || 'BRG Info';

@@ -595,7 +595,7 @@ app.post('/api/token-sync', (req, res) => {
   return res.json({ success: true, message: "Token erfolgreich synchronisiert." });
 });
 
-export const driveFolderId = '1YK8hW4LWtZdmLW-hLcs9fFX_jFz3teOB';
+export const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.DRIVE_FOLDER_ID || '1YK8hW4LWtZdmLW-hLcs9fFX_jFz3teOB';
 
 export function getOAuth2Client(accessToken: string) {
   const oauth2Client = new google.auth.OAuth2();
