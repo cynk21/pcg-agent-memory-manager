@@ -245,6 +245,12 @@ async function processChatCommand(text: string, token: string, oauth2Client: any
   const localMemoryContext = loadLocalMemoryContext();
   const telegramContext = await fetchTelegramGroupMessages(undefined, 7);
   const tasksContext = await fetchTasks(oauth2Client);
+  let driveContext = '';
+  try {
+    driveContext = await fetchDriveKnowledgeBaseContext(token);
+  } catch (driveErr) {
+    console.warn('[processChatCommand] Drive-Kontext konnte nicht geladen werden:', driveErr);
+  }
 
   const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent, Organisationsentwickler und strategische Sparringspartner von Hardy Engwer (IT/KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde).
 
@@ -272,7 +278,7 @@ Antworte IMMER im Format:
 Aktionen & Richtlinien:
 1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive mit professioneller Typografie (Überschriften, Listen, Infoboxen).
    - title: z. B. "Agenda Ratssitzung 11.10.2026"
-   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8). Du kannst entweder sauberen Text mit Nummerierung (1., 2., 3.) ODER direkt semantisches HTML (<h1>, <h2>, <p>, <ul>, <li>, <strong>) liefern.
+   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8).
      
      STRUKTUR DER AGENDA:
      Agenda der Ratssitzung (Online)
@@ -290,10 +296,12 @@ Aktionen & Richtlinien:
           • Geschäftsordnung: Timeboxing (15 Min / Diskussion), Sitzungsdauer max. 2h, Tagesordnungsversand 3 Tage vorab, Protokollversand innerhalb 48h
           • Ressortverteilung & Patenschaften (Abstimmung der Ressorts u.a. mit Jakob)
 
-     3. Nachbereitung & offene To-Dos aus der letzten Sitzung
-        - Servantenreform & weltliche Truppenbetreuung: Vorbereitung des gildenweiten Rekrutierungsaufrufs und Einbindung der Kinderschutz-Schulung (Erzmarschall / Prior).
-        - Medizinisches Korps / Feldscher-System: Einhaltung des Behandlungsleitfadens, Prüfung der Standard-Ausrüstung und dezentrale Standorte (Marco, Melanie, Hardy).
-        - Akademie & Sergeantenqualifizierung: Status des Akademie-Rahmenplans (Gemeinnützigkeit / Förderfähigkeit) und Integration des Kolloquiums ins Tagesseminar (Jakob Lehmann).
+     3. Nachbereitung & offene To-Dos aus der letzten Sitzung (NACHZUHALTENDE PUNKTE AUS DEM LETZTEN PROTOKOLL)
+        WICHTIG: Liste hier alle konkreten, noch offenen Aktionspunkte, Beschlüsse und Aufträge aus dem letzten Ratsprotokoll und den Projekt-Memorys namentlich mit Verantwortlichem auf:
+        - Servantenreform & weltliche Truppenbetreuung: Status des gildenweiten Rekrutierungsaufrufs und Einbindung der Kinderschutz-Schulung (Verantwortlich: Erzmarschall Hardy Engwer / Prior).
+        - Medizinisches Korps / Feldscher-System: Einhaltung des Behandlungsleitfadens, Prüfung der Standard-Ausrüstung und dezentrale Standorte (Verantwortlich: Marco, Melanie, Hardy).
+        - Akademie & Sergeantenqualifizierung: Status des Akademie-Rahmenplans (Gemeinnützigkeit / Förderfähigkeit) und Vorbereitung der Sergeanten-Qualifizierung (Verantwortlich: Jakob Lehmann).
+        - Weitere offene Beschlusspunkte aus vorherigen Protokollen (z. B. Jobbörse / Zeugmeister-Zuständigkeiten / Schildbestände der Komtureien, falls noch offen).
 
      4. Aktuelle Themen & Initiativen aus dem Ritterkollegium (Telegram BRG Info)
         - Mitglieder-Aktivitätsanalyse & EasyVerein-Auswertung (Mikael BRG):
@@ -322,6 +330,9 @@ ${telegramContext}
 
 --- LOKALES STRUKTURIERTES GEDÄCHTNIS (BRG RATSREFORM, GESCHÄFTSORDNUNG, PROJEKTE) ---
 ${localMemoryContext}
+
+--- GOOGLE DRIVE PROTOKOLLE & DOKUMENTE ---
+${driveContext}
 
 --- AKTUELLE TASKS ---
 ${tasksContext}
