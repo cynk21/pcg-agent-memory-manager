@@ -270,18 +270,44 @@ Antworte IMMER im Format:
 
 Aktionen & Richtlinien:
 1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive.
-   - title: z. B. "Tagesordnung_Ratssitzung_11_10_2026"
-   - content: Wenn Hardy eine Agenda, Beschlussvorlage, Vorbereitung oder ein Konzept anfordert, erstelle einen VOLLSTÄNDIGEN, SEHR DETAILLIERTEN, SAUBER STRUKTURIERTEN TEXT.
-     • Bei BRG-Ratssitzungs-Agenden:
-       - Berücksichtige die **Geschäftsordnung des Rates der Ritter** (GO: Sitzungsdauer max. 2h, Timeboxing 15 Min/TOP, klare Zielangabe: Information/Diskussion/Entscheidung, Beschlüsse mit einfacher Mehrheit).
-       - Binde Hardys **Beschlussvorlage zur Ratsstrukturierung / Ratsreform (Variante 3: Beschlusskonferenz mit Vorlagenpflicht & Ressortsystem)** vollständig und ausführlich ein.
-       - Integriere die konkreten **Themenmeldungen aus dem Telegram-Chat "BRG Info"** mit namentlicher Nennung und Kontext:
-         * **Mikael BRG:** EasyVerein-Aktivitätsanalyse der Mitglieder nach Standorten, Veranstaltungsarten und Gattungen (mit Grafiken/Beamer, 5-10 Min).
-         * **Frank Berliner:** Teilnahme-Motivation der Mitglieder, Vorschläge nach Vortrag beim VdK.
-         * **Levent Ritter:** Distribution & Prüfung der Kodizes / Tugenden.
-         * **Hardy Engwer (Erzmarschall):** Beschlussvorlage Ratsreform, Servantenreform (Truppenbetreuer-Aufruf, Kinderschutz-Schulung), Feldscher-System.
-         * **Jakob:** Akademie-Rahmenplan & Sergeanten-Kolloquium.
-       - Formuliere für jeden TOP: *Thema*, *Referent*, *Ziel (Info/Diskussion/Entscheidung)*, *Geplante Zeit*, *Problemstellung & Vorbereitungshinweise für die Ratsmitglieder*.
+   - title: z. B. "Agenda Ratssitzung 11.10.2026"
+   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8) in sauberem Fließtext (ohne Markdown-Artefakte wie ##, ** oder *, sondern lesbare Nummerierung 1., 2., 3., Spiegelstriche - / • und klare Einrückungen):
+     
+     MUSTER DER AGENDA:
+     Agenda der Ratssitzung (Online)
+     Datum: Sonntag, [Datum], [Uhrzeit]
+     Protokoll-Referenz: Sitzung vom [Datum der letzten Sitzung]
+     Entschuldigt / Abwesend: [Namen falls bekannt]
+
+     1. Eröffnung & Feststellung der Beschlussfähigkeit (Erzmarschall Hardy Engwer)
+
+     2. Haupttagesordnungspunkt: Verabschiedung der Ratsstrukturierung & Geschäftsordnung (Erzmarschall Hardy Engwer)
+        - Ziel: Beschlussfassung
+        - Vorlage: Strukturreform des Rates der Ritter (Variante 3: Verbindliche Beschlusskonferenz mit Vorlagenpflicht & Ressortsystem). Keine Verkleinerung auf Zwölferrat, Rat bleibt zentrales Beschlussorgan aller Ritter.
+        - Kernpunkte & Anträge:
+          • Einführung verbindlicher Vorlagenpflicht für alle Beschlussanträge (Problemstellung, Lösungsvorschlag, Ressourcen/Kosten)
+          • Geschäftsordnung: Timeboxing (15 Min / Diskussion), Sitzungsdauer max. 2h, Tagesordnungsversand 3 Tage vorab, Protokollversand innerhalb 48h
+          • Ressortverteilung & Patenschaften (Abstimmung der Ressorts u.a. mit Jakob)
+
+     3. Nachbereitung & offene To-Dos aus der letzten Sitzung
+        - Servantenreform & weltliche Truppenbetreuung: Vorbereitung des gildenweiten Rekrutierungsaufrufs und Einbindung der Kinderschutz-Schulung (Erzmarschall / Prior).
+        - Medizinisches Korps / Feldscher-System: Einhaltung des Behandlungsleitfadens, Prüfung der Standard-Ausrüstung und dezentrale Standorte (Marco, Melanie, Hardy).
+        - Akademie & Sergeantenqualifizierung: Status des Akademie-Rahmenplans (Gemeinnützigkeit / Förderfähigkeit) und Integration des Kolloquiums ins Tagesseminar (Jakob Lehmann).
+
+     4. Aktuelle Themen & Initiativen aus dem Ritterkollegium (Telegram BRG Info)
+        - Mitglieder-Aktivitätsanalyse & EasyVerein-Auswertung (Mikael BRG):
+          • Ziel: Information & Diskussion (ca. 5–10 Min)
+          • Vorstellung detaillierter Grafiken zur Mitgliederaktivität nach Standorten, Veranstaltungsarten und Gattungen sowie deren historische Entwicklung (Beamer-Präsentation).
+        - Mitglieder-Motivation & Beteiligung bei Gilden-Events (Frank Berliner):
+          • Ziel: Diskussion & Initiierung von Maßnahmen
+          • Vorstellung von Vorschlägen zur Steigerung der Teilnahme-Motivation basierend auf den Erkenntnissen als Gastredner beim VdK.
+        - Kodizes & ritterliche Tugenden (Levent Ritter):
+          • Ziel: Abstimmung
+          • Status der Distribution, Überprüfung und Verankerung der 10 Tugenden im Ausbildungs- und Lagerbetrieb.
+
+     5. Varia & Sonstiges
+        - Termine kommende Events & nächste Ratssitzung
+        - Kurzfristige Anliegen der Ratsmitglieder
 2. "telegram_send": Nachricht in einen Telegram-Chat posten (z. B. "BRG Info"). targetChat = "BRG Info", body = Nachricht.
 3. "task": Aufgabe in Google Tasks anlegen.
 4. "calendar": Kalendertermin anlegen.
@@ -346,8 +372,14 @@ Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
         const drive = await getDriveClient(token);
         // Clean title (keine .md Endung im Titel bei echten Google Docs)
         const docTitle = (action.title || 'Neues Dokument').replace(/\.(md|txt|docx?)$/i, '');
-        const content = action.content || action.body || action.notes || 'Inhalt';
-        // HTML / Text für native Google Docs Konvertierung
+        let content = action.content || action.body || action.notes || 'Inhalt';
+        // Falls Markdown-Artefakte vorhanden sind, für Google Docs bereinigen
+        content = content
+          .replace(/^#{1,6}\s+/gm, '') // Entferne ### Header-Marker
+          .replace(/\*\*([^*]+)\*\*/g, '$1') // Entferne **fett**
+          .replace(/__([^_]+)__/g, '$1')
+          .replace(/^\*\s+/gm, '- '); // Vereinheitliche Aufzählungen
+
         const media = { mimeType: 'text/plain', body: content };
         
         let res: any;
