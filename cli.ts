@@ -469,7 +469,7 @@ async function cmdAuth(force: boolean) {
 }
 
 async function cmdTelegramAuth() {
-  console.log('\n--- Telegram Authentifizierung (MTProto User-Account) ---');
+  console.log('\n--- Telegram Authentifizierung via QR-Code (MTProto User-Account, nur lesend) ---');
   const apiIdStr = process.env.TELEGRAM_API_ID || await prompt('Bitte gib deine Telegram API_ID ein (von my.telegram.org): ');
   const apiHash = process.env.TELEGRAM_API_HASH || await prompt('Bitte gib deinen Telegram API_HASH ein (von my.telegram.org): ');
 
@@ -479,23 +479,64 @@ async function cmdTelegramAuth() {
     return;
   }
 
+  const { default: qrcodeTerminal } = await import('qrcode-terminal');
+
   const stringSession = new StringSession('');
   const client = new TelegramClient(stringSession, apiId, apiHash, {
-    connectionRetries: 3,
+    connectionRetries: 5,
+    deviceModel: 'PCG Memory Manager',
+    appVersion: '1.0.0',
+    systemVersion: 'Windows 11',
   });
 
-  await client.start({
-    phoneNumber: async () => await prompt('Bitte gib deine Telefonnummer im internationalen Format ein (z. B. +491701234567): '),
-    password: async () => await prompt('Bitte gib dein 2FA-Passwort ein (falls aktiviert, sonst leer lassen): '),
-    phoneCode: async () => await prompt('Bitte gib den Bestätigungscode ein, den du per Telegram erhalten hast: '),
-    onError: (err) => console.error('Telegram Auth Fehler:', err),
-  });
+  await client.connect();
+  console.log('Verbindung zu Telegram-Servern erfolgreich hergestellt.\n');
+  console.log('Es wird KEIN Bestätigungscode verschickt – stattdessen scannst du gleich einen QR-Code.');
+  console.log('So geht\'s in der Telegram-App auf dem Handy:');
+  console.log('  Einstellungen -> Geräte -> "Desktop-Gerät verbinden" (QR-Scanner öffnet sich)\n');
 
-  const sessionStr = String(client.session.save());
-  saveTelegramSessionString(sessionStr);
-  console.log('\nErfolgreich bei Telegram angemeldet!');
-  console.log('Session wurde lokal in .telegram_session.json gespeichert.');
-  await client.disconnect();
+  try {
+    let lastToken = '';
+    await client.signInUserWithQrCode(
+      { apiId, apiHash },
+      {
+        qrCode: async (qrCode: { token: Buffer; expires: number }) => {
+          const tokenB64 = qrCode.token
+            .toString('base64')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+          const url = `tg://login?token=${tokenB64}`;
+          if (url === lastToken) return;
+          lastToken = url;
+          console.log('\n================= QR-CODE SCANNEN =================\n');
+          qrcodeTerminal.generate(url, { small: true }, (qr: string) => console.log(qr));
+          console.log(`(Alternativ-Link: ${url})`);
+          console.log('Der QR-Code erneuert sich automatisch, falls er abläuft. Warte auf Scan...');
+        },
+        password: async (hint?: string) => {
+          console.log(`\n2FA-Passwort ist für diesen Account aktiviert.${hint ? ` (Hinweis: ${hint})` : ''}`);
+          return (await prompt('Bitte gib dein Telegram 2FA-(Cloud-)Passwort ein: ')).trim();
+        },
+        onError: async (err: Error) => {
+          console.error('QR-Login Fehler:', err?.message || err);
+          return true; // Abbruch bei hartem Fehler
+        },
+      }
+    );
+
+    const me: any = await client.getMe();
+    const sessionStr = String(client.session.save());
+    saveTelegramSessionString(sessionStr);
+    console.log(`\nErfolgreich bei Telegram angemeldet als: ${me?.firstName || ''} ${me?.lastName || ''} (@${me?.username || '-'})`);
+    console.log('Session wurde lokal in .telegram_session.json gespeichert.');
+    console.log('Ab jetzt liest der Daily-Lauf die Gruppe "BRG Info" automatisch mit (rein lesend).');
+  } catch (err: any) {
+    console.error('\nTelegram Login-Fehler aufgetreten:');
+    console.error('Meldung:', err?.message || err);
+  } finally {
+    await client.disconnect();
+  }
 }
 
 async function cmdStatus() {
