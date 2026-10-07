@@ -595,7 +595,7 @@ app.post('/api/token-sync', (req, res) => {
   return res.json({ success: true, message: "Token erfolgreich synchronisiert." });
 });
 
-export const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.DRIVE_FOLDER_ID || '1YK8hW4LWtZdmLW-hLcs9fFX_jFz3teOB';
+export const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.DRIVE_FOLDER_ID || '';
 
 export function getOAuth2Client(accessToken: string) {
   const oauth2Client = new google.auth.OAuth2();
@@ -608,7 +608,7 @@ export async function getDriveClient(accessToken: string) {
 }
 
 function fetchDriveContext(accessToken: string) {
-  return readDriveKnowledgeBaseContext(accessToken, driveFolderId, {
+  return readDriveKnowledgeBaseContext(accessToken, driveFolderId || 'root', {
     getDriveClient,
     listAllFiles,
     getFileContent,
@@ -678,17 +678,23 @@ export function loadSkillContext(skillNames: string[]): string {
 
 export async function syncLocalMemoryToDrive(accessToken: string): Promise<string[]> {
   const memDir = path.join(process.cwd(), 'agent-memory');
-  if (!fs.existsSync(memDir)) return [];
+  if (!fs.existsSync(memDir) || !driveFolderId) return [];
 
   const drive = await getDriveClient(accessToken);
   const syncedFiles: string[] = [];
 
   const syncDirectory = async (localDir: string, parentId: string, relativeDir: string): Promise<void> => {
-    const filesRes = await drive.files.list({
-      q: `'${parentId}' in parents and trashed=false`,
-      fields: 'files(id,name,mimeType)',
-      pageSize: 100,
-    });
+    let filesRes: any;
+    try {
+      filesRes = await drive.files.list({
+        q: `'${parentId}' in parents and trashed=false`,
+        fields: 'files(id,name,mimeType)',
+        pageSize: 100,
+      });
+    } catch (listErr: any) {
+      console.warn(`[Memory Sync] Ordner "${parentId}" nicht erreichbar (${listErr?.message || listErr}). Überspringe Sync für dieses Verzeichnis.`);
+      return;
+    }
     const existingFiles = new Map<string, { id: string; mimeType?: string }>();
     for (const file of filesRes.data.files || []) {
       if (file.id && file.name) existingFiles.set(file.name, { id: file.id, mimeType: file.mimeType });
@@ -702,11 +708,16 @@ export async function syncLocalMemoryToDrive(accessToken: string): Promise<strin
       if (entry.isDirectory()) {
         let folderId = existingFiles.get(entry.name)?.id;
         if (!folderId) {
-          const folder = await drive.files.create({
-            requestBody: { name: entry.name, parents: [parentId], mimeType: 'application/vnd.google-apps.folder' },
-            fields: 'id',
-          });
-          folderId = folder.data.id || '';
+          try {
+            const folder = await drive.files.create({
+              requestBody: { name: entry.name, parents: [parentId], mimeType: 'application/vnd.google-apps.folder' },
+              fields: 'id',
+            });
+            folderId = folder.data.id || '';
+          } catch (createFolderErr: any) {
+            console.warn(`[Memory Sync] Unterordner "${entry.name}" konnte in "${parentId}" nicht erstellt werden:`, createFolderErr?.message || createFolderErr);
+            continue;
+          }
         }
         if (folderId) await syncDirectory(localPath, folderId, relativePath);
         continue;
@@ -718,16 +729,24 @@ export async function syncLocalMemoryToDrive(accessToken: string): Promise<strin
       const media = { mimeType, body };
       const fileId = existingFiles.get(entry.name)?.id;
 
-      if (fileId) {
-        await drive.files.update({ fileId, media });
-      } else {
-        await drive.files.create({ requestBody: { name: entry.name, parents: [parentId], mimeType }, media });
+      try {
+        if (fileId) {
+          await drive.files.update({ fileId, media });
+        } else {
+          await drive.files.create({ requestBody: { name: entry.name, parents: [parentId], mimeType }, media });
+        }
+        syncedFiles.push(relativePath);
+      } catch (fileSyncErr: any) {
+        console.warn(`[Memory Sync] Datei "${entry.name}" konnte nicht synchronisiert werden:`, fileSyncErr?.message || fileSyncErr);
       }
-      syncedFiles.push(relativePath);
     }
   };
 
-  await syncDirectory(memDir, driveFolderId, '');
+  try {
+    await syncDirectory(memDir, driveFolderId, '');
+  } catch (err: any) {
+    console.warn(`[Memory Sync] Fehler beim Synchronisieren nach Drive:`, err?.message || err);
+  }
   return syncedFiles;
 }
 
@@ -2024,14 +2043,25 @@ app.post('/api/actions/drive', async (req, res) => {
     const fieldError = validateTextField(fileName, 'Dateiname', 255, true) || validateTextField(content, 'Dokumentinhalt', 1000000, true);
     if (fieldError) return res.status(400).json({ error: fieldError });
 
-    const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
+    const fileMetadata: any = { name: fileName, mimeType: 'text/markdown' };
+    if (driveFolderId) fileMetadata.parents = [driveFolderId];
     const media = { mimeType: 'text/markdown', body: content };
 
-    const fileRes = await drive.files.create({
-      requestBody: fileMetadata,
-      media: media,
-      fields: 'id, name, webViewLink'
-    });
+    let fileRes: any;
+    try {
+      fileRes = await drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id, name, webViewLink'
+      });
+    } catch (createErr: any) {
+      delete fileMetadata.parents;
+      fileRes = await drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id, name, webViewLink'
+      });
+    }
 
     res.json({
       success: true,
@@ -2681,19 +2711,27 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   try {
     const drive = await getDriveClient(accessToken);
     const fileName = `Daily_Update_${dateStr}.md`;
-    
-    const res = await drive.files.list({
-      q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
-      fields: 'files(id)'
-    });
-    const files = res.data.files || [];
-    
-    const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
     const media = { mimeType: 'text/markdown', body: summary };
-    
+
+    let files: any[] = [];
+    let targetParents: string[] | undefined = undefined;
+
+    try {
+      const res = await drive.files.list({
+        q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
+        fields: 'files(id)'
+      });
+      files = res.data.files || [];
+      targetParents = [driveFolderId];
+    } catch (folderErr: any) {
+      console.warn(`[Daily Briefing Drive] Ordner "${driveFolderId}" nicht erreichbar (${folderErr?.message || folderErr}). Speichere Briefing im Drive Root.`);
+    }
+
     if (files.length > 0) {
       await drive.files.update({ fileId: files[0].id, media: media });
     } else {
+      const fileMetadata: any = { name: fileName, mimeType: 'text/markdown' };
+      if (targetParents) fileMetadata.parents = targetParents;
       await drive.files.create({ requestBody: fileMetadata, media: media });
     }
   } catch (driveErr: any) {
@@ -2847,16 +2885,27 @@ ${localMemoryContext}
   try {
     const drive = await getDriveClient(accessToken);
     const fileName = `Weekly_Review_${dateStr}.md`;
-    const res = await drive.files.list({
-      q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
-      fields: 'files(id)'
-    });
-    const files = res.data.files || [];
-    const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
     const media = { mimeType: 'text/markdown', body: summary };
+
+    let files: any[] = [];
+    let targetParents: string[] | undefined = undefined;
+
+    try {
+      const res = await drive.files.list({
+        q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
+        fields: 'files(id)'
+      });
+      files = res.data.files || [];
+      targetParents = [driveFolderId];
+    } catch (folderErr: any) {
+      console.warn(`[Weekly Review Drive] Ordner "${driveFolderId}" nicht erreichbar (${folderErr?.message || folderErr}). Speichere Weekly Review im Drive Root.`);
+    }
+
     if (files.length > 0) {
       await drive.files.update({ fileId: files[0].id, media: media });
     } else {
+      const fileMetadata: any = { name: fileName, mimeType: 'text/markdown' };
+      if (targetParents) fileMetadata.parents = targetParents;
       await drive.files.create({ requestBody: fileMetadata, media: media });
     }
   } catch (driveErr: any) {

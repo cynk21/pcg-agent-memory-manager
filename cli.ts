@@ -325,12 +325,16 @@ Antworte NUR mit dem <ACTION>-Block, kein überflüssiger Text drumherum.`;
         const media = { mimeType: 'text/markdown', body: content };
         
         let res: any;
-        try {
-          // Versuche zuerst den konfigurierten Zielordner (falls vorhanden & beschreibbar)
-          const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
-          res = await drive.files.create({ requestBody: fileMetadata, media, fields: 'id, name, webViewLink' });
-        } catch (folderErr: any) {
-          console.warn(`Drive Folder "${driveFolderId}" nicht beschreibbar oder nicht gefunden (${folderErr?.message || folderErr}). Speichere im Drive Root.`);
+        if (driveFolderId) {
+          try {
+            const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
+            res = await drive.files.create({ requestBody: fileMetadata, media, fields: 'id, name, webViewLink' });
+          } catch (folderErr: any) {
+            console.warn(`Drive Folder "${driveFolderId}" nicht beschreibbar oder nicht gefunden (${folderErr?.message || folderErr}). Speichere im Drive Root.`);
+          }
+        }
+
+        if (!res) {
           const fallbackMetadata = { name: fileName, mimeType: 'text/markdown' };
           res = await drive.files.create({ requestBody: fallbackMetadata, media, fields: 'id, name, webViewLink' });
         }
