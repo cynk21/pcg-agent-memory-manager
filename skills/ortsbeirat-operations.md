@@ -32,8 +32,9 @@ Im täglichen Briefing wird unter Abschnitt **2. Ortsbeirat & Kommunales (Glietz
 - **Offene Entscheidungen & Aufgaben:** Anstehende Ortsbeiratstermine, Beschlussvorlagen oder To-dos für Hardy.
 - Jede Information muss quellenbasiert mit Direktlink belegt sein. Wenn keine aktuellen Workspace-Meldungen vorliegen, wird dies transparent vermerkt.
 
-## Guardrails
-
-- Keine Finanzzahlen, Beschlüsse oder Anliegen ohne Quellenbeleg erfinden.
+### Rollenabgrenzung & Guardrails
+- **Keine Agenden für Ortsbeirat/Glietz:** Agenden & strukturierte Sitzungsvorbereitungen gelten ausschließlich für den Rat der Ritter (BRG). Für Ortsbeirat/Glietz werden keine Agenden generiert.
+- **Keine Finanzzahlen, Beschlüsse oder Anliegen ohne Quellenbeleg erfinden.**
+- **Nur offizielle Kommunalthemen:** Trennung von privaten und gildenbezogenen Themen.
 - Aufgabenstatus wird autoritativ über Google Tasks abgeglichen (erledigte Tasks nicht reaktivieren).
 - Jede Aussage muss auf Gmail, Chat, Drive-Dokumente oder Tasks zurückführbar sein.

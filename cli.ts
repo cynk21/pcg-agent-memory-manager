@@ -985,7 +985,7 @@ Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, STRUKTURIER
 3. **🤖 Konkrete Unterstützungsvorschläge:**
    Mache für JEDES wesentliche To-Do einen konkreten, sofort umsetzbaren Vorschlag, wie DU als Assistent direkt die Arbeit abnehmen oder vorbereiten kannst:
    - **BRG / Ratssitzung (z.B. 11.10.):** Biete an, einen vollständigen Entwurf für die Tagesordnung / Einladung als Google Doc in Drive anzulegen (unter Berücksichtigung der Geschäftsordnung, Protokolle & Telegram-Meldungen wie Mikaels Grafiken & Franks Vorschlag) und nach Freigabe den Link in den Telegram-Kanal "BRG Info" zu posten.
-   - **Ortsbeirat / Kommunales (z.B. LAG Oderland 15.10. / Dorfbudget / Solarpark):** Biete an, einen Konzept- oder Antragsentwurf als Google Doc vorzubereiten oder einen Kalendertermin einzustellen.
+   - **Ortsbeirat / Kommunales (Glietz / Märkische Heide):** Dies ist ein separates kommunales Projekt. Hier werden KEINE Agenden erstellt! Biete stattdessen Unterstützung bei Fristen (z. B. LAG Oderland 15.10., LEADER), Nachfass-To-Dos bei der Gemeindeverwaltung (Bauamt/Bürgermeister), Notizen zur Mittelverwendung (Dorfbudget, Solarpark-Zuwendungen) oder Terminerinnerungen an.
    - **Administrative / Finanzthemen (z.B. Abrechnungen, Mails):** Biete an, Entwürfe oder Erinnerungen vorzubereiten.
 4. **Call to Action:** Erinnere Hardy kurz daran, dass er dir einfach direkt hier im Chat antworten kann (z. B. *"Erstelle die Agenda für die Ratssitzung als Doc"*, *"Bereite das LAG-Konzept vor"*, *"Poste Nachricht in Telegram"* etc.), damit du die Aktion sofort ausführst.
 
