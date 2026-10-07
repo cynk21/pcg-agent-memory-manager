@@ -26,6 +26,7 @@ import {
   getOAuth2Client,
   getDriveClient,
   driveFolderId,
+  loadLocalMemoryContext,
   cleanContentForEmail,
   generateAIContent,
   formatAIError,
@@ -240,11 +241,15 @@ async function cmdChatSend(text: string) {
 }
 
 async function processChatCommand(text: string, token: string, oauth2Client: any): Promise<string> {
-  const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent und Sparringspartner von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde).
+  const localMemoryContext = loadLocalMemoryContext();
+  const telegramContext = await fetchTelegramGroupMessages(undefined, 7);
+  const tasksContext = await fetchTasks(oauth2Client);
+
+  const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent, Organisationsentwickler und strategische Sparringspartner von Hardy Engwer (IT/KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde).
 
 Analysiere Hardys Chat-Nachricht genau und entscheide, ob es sich um:
-A) Eine konkrete System-Aktion (Task, Termin, E-Mail, Doc-Erstellung, Telegram-Post etc.) handelt, ODER
-B) Eine Frage, Bitte um Unterstützung, Recherche, Vorbereitung oder Konzeptionierung.
+A) Eine konkrete System-Aktion (Google Doc anlegen, Task, Kalendertermin, E-Mail, Telegram-Nachricht etc.) handelt, ODER
+B) Eine Frage, Bitte um strategische Vorbereitung, Konzept oder Ausarbeitung.
 
 Antworte IMMER im Format:
 <ACTION>
@@ -263,19 +268,38 @@ Antworte IMMER im Format:
 }
 </ACTION>
 
-Aktionen & Regeln:
-1. "task": Aufgabe in Google Tasks anlegen. title = Aufgabe, dueDate = YYYY-MM-DD (falls genannt), notes = Details.
-2. "calendar": Kalendertermin anlegen. title = Titel, startTime = ISO-Format (z. B. "2026-10-10T14:00:00").
-3. "email": E-Mail senden. to (leer = an Hardy selbst), subject, body.
-4. "drive_doc": Ein neues Dokument / Agenda / Konzept direkt in Google Drive erstellen. title = Dateiname (z. B. "Agenda_Ratssitzung_11_10_2026.md"), content = Der vollständige, strukturierte Text des Dokuments.
-5. "telegram_send": Eine Nachricht in einen Telegram-Chat posten (z. B. "BRG Info" oder Namen). targetChat = Name/Pattern des Chats (z. B. "BRG Info"), body = Der Nachrichtentext.
-6. "todos": Liste der offenen Google Tasks anzeigen.
-7. "status": Status des letzten Daily-Updates anzeigen.
-8. "daily": Das komplette tägliche Update jetzt auslösen.
-9. "weekly": Den Wochenrückblick jetzt auslösen.
-10. "assist": Wenn Hardy eine allgemeine Frage stellt, nach Rat/Konzept fragt oder Unterstützung wünscht, die keine automatische System-Mutation ist. reply = Deine ausführliche, kompetente, strukturierte und proaktive Antwort an Hardy.
+Aktionen & Richtlinien:
+1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive.
+   - title: z. B. "Tagesordnung_Ratssitzung_11_10_2026"
+   - content: Wenn Hardy eine Agenda, Beschlussvorlage, Vorbereitung oder ein Konzept anfordert, erstelle einen VOLLSTÄNDIGEN, SEHR DETAILLIERTEN, SAUBER STRUKTURIERTEN TEXT.
+     • Bei BRG-Ratssitzungs-Agenden:
+       - Berücksichtige die **Geschäftsordnung des Rates der Ritter** (GO: Sitzungsdauer max. 2h, Timeboxing 15 Min/TOP, klare Zielangabe: Information/Diskussion/Entscheidung, Beschlüsse mit einfacher Mehrheit).
+       - Binde Hardys **Beschlussvorlage zur Ratsstrukturierung / Ratsreform (Variante 3: Beschlusskonferenz mit Vorlagenpflicht & Ressortsystem)** vollständig und ausführlich ein.
+       - Integriere die konkreten **Themenmeldungen aus dem Telegram-Chat "BRG Info"** mit namentlicher Nennung und Kontext:
+         * **Mikael BRG:** EasyVerein-Aktivitätsanalyse der Mitglieder nach Standorten, Veranstaltungsarten und Gattungen (mit Grafiken/Beamer, 5-10 Min).
+         * **Frank Berliner:** Teilnahme-Motivation der Mitglieder, Vorschläge nach Vortrag beim VdK.
+         * **Levent Ritter:** Distribution & Prüfung der Kodizes / Tugenden.
+         * **Hardy Engwer (Erzmarschall):** Beschlussvorlage Ratsreform, Servantenreform (Truppenbetreuer-Aufruf, Kinderschutz-Schulung), Feldscher-System.
+         * **Jakob:** Akademie-Rahmenplan & Sergeanten-Kolloquium.
+       - Formuliere für jeden TOP: *Thema*, *Referent*, *Ziel (Info/Diskussion/Entscheidung)*, *Geplante Zeit*, *Problemstellung & Vorbereitungshinweise für die Ratsmitglieder*.
+2. "telegram_send": Nachricht in einen Telegram-Chat posten (z. B. "BRG Info"). targetChat = "BRG Info", body = Nachricht.
+3. "task": Aufgabe in Google Tasks anlegen.
+4. "calendar": Kalendertermin anlegen.
+5. "email": E-Mail senden.
+6. "todos", "status", "daily", "weekly": Status- und Trigger-Aktionen.
+7. "assist": Direkte inhaltliche Text-Antwort an Hardy.
 
-Antworte NUR mit dem <ACTION>-Block, kein überflüssiger Text drumherum.`;
+KONTEXT-DATEN:
+--- TELEGRAM CHATS DER LETZTEN 7 TAGE ---
+${telegramContext}
+
+--- LOKALES STRUKTURIERTES GEDÄCHTNIS (BRG RATSREFORM, GESCHÄFTSORDNUNG, PROJEKTE) ---
+${localMemoryContext}
+
+--- AKTUELLE TASKS ---
+${tasksContext}
+
+Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
 
   const response = await generateAIContent({
     contents: `Chat-Nachricht von Hardy: ${text}`,
@@ -320,26 +344,43 @@ Antworte NUR mit dem <ACTION>-Block, kein überflüssiger Text drumherum.`;
       }
       case 'drive_doc': {
         const drive = await getDriveClient(token);
-        const fileName = action.title?.endsWith('.md') ? action.title : `${action.title || 'Dokument'}.md`;
-        const content = action.content || action.body || action.notes || '# Neues Dokument';
-        const media = { mimeType: 'text/markdown', body: content };
+        // Clean title (keine .md Endung im Titel bei echten Google Docs)
+        const docTitle = (action.title || 'Neues Dokument').replace(/\.(md|txt|docx?)$/i, '');
+        const content = action.content || action.body || action.notes || 'Inhalt';
+        // HTML / Text für native Google Docs Konvertierung
+        const media = { mimeType: 'text/plain', body: content };
         
         let res: any;
         if (driveFolderId) {
           try {
-            const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
-            res = await drive.files.create({ requestBody: fileMetadata, media, fields: 'id, name, webViewLink' });
+            const fileMetadata = {
+              name: docTitle,
+              parents: [driveFolderId],
+              mimeType: 'application/vnd.google-apps.document',
+            };
+            res = await drive.files.create({
+              requestBody: fileMetadata,
+              media,
+              fields: 'id, name, webViewLink',
+            });
           } catch (folderErr: any) {
-            console.warn(`Drive Folder "${driveFolderId}" nicht beschreibbar oder nicht gefunden (${folderErr?.message || folderErr}). Speichere im Drive Root.`);
+            console.warn(`Drive Folder "${driveFolderId}" nicht beschreibbar (${folderErr?.message || folderErr}). Speichere im Drive Root.`);
           }
         }
 
         if (!res) {
-          const fallbackMetadata = { name: fileName, mimeType: 'text/markdown' };
-          res = await drive.files.create({ requestBody: fallbackMetadata, media, fields: 'id, name, webViewLink' });
+          const fallbackMetadata = {
+            name: docTitle,
+            mimeType: 'application/vnd.google-apps.document',
+          };
+          res = await drive.files.create({
+            requestBody: fallbackMetadata,
+            media,
+            fields: 'id, name, webViewLink',
+          });
         }
 
-        return `📄 Google Drive Dokument erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || 'in Google Drive gespeichert'}`;
+        return `📄 Google Doc erstellt: "${res.data.name}"\n🔗 Link: ${res.data.webViewLink || 'in Google Drive gespeichert'}`;
       }
       case 'telegram_send': {
         const target = action.targetChat || 'BRG Info';

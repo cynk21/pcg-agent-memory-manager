@@ -631,8 +631,7 @@ export function extractDavidOneOnOneAgenda(tasksContext?: string): string {
     : '--- BESONDERE AGENDA-QUELLE: BESPRECHUNG DAVID ---\nKeine offene Aufgabe "Besprechung David" gefunden.';
 }
 
-// Function to recursively list files in the knowledge base folder
-function loadLocalMemoryContext(): string {
+export function loadLocalMemoryContext(): string {
   try {
     const memDir = path.join(process.cwd(), 'agent-memory');
     if (!fs.existsSync(memDir)) return "(Kein lokales Nutzer-Memory vorhanden.)\n";
