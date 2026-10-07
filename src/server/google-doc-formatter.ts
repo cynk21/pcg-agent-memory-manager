@@ -28,13 +28,8 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
   const lines = rawText.split('\n');
   const bodyHtml: string[] = [];
   let inList = false;
-  let inSubList = false;
 
   const closeList = () => {
-    if (inSubList) {
-      bodyHtml.push('</ul></li>');
-      inSubList = false;
-    }
     if (inList) {
       bodyHtml.push('</ul>');
       inList = false;
@@ -50,7 +45,7 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
       continue;
     }
 
-    // H1 (# Title oder expliziter Agenda-Titel am Anfang)
+    // Dokument-Titel (H1)
     if (/^#\s+/.test(line) || (i === 0 && /^Agenda der Ratssitzung/i.test(line))) {
       closeList();
       const titleText = line.replace(/^#\s*/, '');
@@ -58,7 +53,7 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
       continue;
     }
 
-    // H2 (## Topic oder "1. Eröffnung", "TOP 1:", etc.)
+    // TOP-Überschriften (H2) – z.B. "1. Eröffnung", "2. Haupttagesordnungspunkt: ...", "TOP 1: ..."
     if (/^##\s+/.test(line) || /^(\d+\.|\bTOP\s+\d+:)\s+/.test(line)) {
       closeList();
       const h2Text = line.replace(/^##\s*/, '');
@@ -66,7 +61,7 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
       continue;
     }
 
-    // H3 (### Subtopic)
+    // Sub-Überschriften (H3)
     if (/^###\s+/.test(line)) {
       closeList();
       const h3Text = line.replace(/^###\s*/, '');
@@ -74,35 +69,16 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
       continue;
     }
 
-    // Meta-Informationen (Datum, Protokoll-Referenz, Leitung)
+    // Meta-Zeilen (Datum, Ort, Leitung etc.) – dezente Textzeilen
     if (/^(Datum|Protokoll-Referenz|Ort|Leitung|Entschuldigt|Abwesend):/i.test(line)) {
       closeList();
-      bodyHtml.push(`<div class="meta-row">${formatInlineMarkdown(line)}</div>`);
+      bodyHtml.push(`<p class="meta-line">${formatInlineMarkdown(line)}</p>`);
       continue;
     }
 
-    // Verschachtelte Unter-Liste (z. B. "  - " oder "    • ")
-    const subListMatch = rawLine.match(/^(\s{2,}|\t+)[-*•]\s+(.*)$/);
-    if (subListMatch) {
-      if (!inList) {
-        bodyHtml.push('<ul>');
-        inList = true;
-      }
-      if (!inSubList) {
-        bodyHtml.push('<ul>');
-        inSubList = true;
-      }
-      bodyHtml.push(`<li>${formatInlineMarkdown(subListMatch[2])}</li>`);
-      continue;
-    }
-
-    // Normale Liste auf Hauptebene (- , * , • )
+    // Unterpunkte / Listenpunkte (auf allen Ebenen als saubere Standard-Aufzählung)
     const listMatch = line.match(/^[-*•]\s+(.*)$/);
     if (listMatch) {
-      if (inSubList) {
-        bodyHtml.push('</ul>');
-        inSubList = false;
-      }
       if (!inList) {
         bodyHtml.push('<ul>');
         inList = true;
@@ -111,15 +87,7 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
       continue;
     }
 
-    // Blockquote oder Highlight
-    if (line.startsWith('>')) {
-      closeList();
-      const quoteText = line.replace(/^>\s*/, '');
-      bodyHtml.push(`<div class="highlight-box">${formatInlineMarkdown(quoteText)}</div>`);
-      continue;
-    }
-
-    // Normaler Absatz
+    // Normaler Textabsatz
     closeList();
     bodyHtml.push(`<p>${formatInlineMarkdown(line)}</p>`);
   }
@@ -132,73 +100,54 @@ export function convertTextToGoogleDocHtml(rawText: string, docTitle: string = '
 <meta charset="utf-8">
 <style>
   body {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: Arial, sans-serif;
     font-size: 11pt;
     line-height: 1.5;
-    color: #202124;
-    padding: 0;
-    margin: 0;
+    color: #000000;
   }
   h1 {
-    font-size: 18pt;
+    font-family: Arial, sans-serif;
+    font-size: 16pt;
     font-weight: bold;
-    color: #1a365d;
-    margin-top: 0;
-    margin-bottom: 8px;
-    padding-bottom: 4px;
-    border-bottom: 2px solid #2b6cb0;
+    color: #000000;
+    margin-top: 0pt;
+    margin-bottom: 6pt;
   }
   h2 {
-    font-size: 13.5pt;
+    font-family: Arial, sans-serif;
+    font-size: 12pt;
     font-weight: bold;
-    color: #2b6cb0;
-    margin-top: 20px;
-    margin-bottom: 6px;
-    padding-bottom: 2px;
-    border-bottom: 1px solid #e2e8f0;
+    color: #000000;
+    margin-top: 14pt;
+    margin-bottom: 4pt;
   }
   h3 {
-    font-size: 11.5pt;
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
     font-weight: bold;
-    color: #2d3748;
-    margin-top: 12px;
-    margin-bottom: 4px;
-  }
-  .meta-row {
-    font-size: 10pt;
-    color: #4a5568;
-    background-color: #f7fafc;
-    border-left: 4px solid #3182ce;
-    padding: 4px 10px;
-    margin-bottom: 4px;
+    color: #000000;
+    margin-top: 10pt;
+    margin-bottom: 3pt;
   }
   p {
-    margin-top: 4px;
-    margin-bottom: 6px;
+    margin-top: 2pt;
+    margin-bottom: 4pt;
+  }
+  .meta-line {
+    color: #444444;
+    margin-top: 1pt;
+    margin-bottom: 3pt;
   }
   ul {
-    margin-top: 4px;
-    margin-bottom: 8px;
-    padding-left: 24px;
+    margin-top: 2pt;
+    margin-bottom: 6pt;
+    padding-left: 20pt;
   }
   li {
-    margin-bottom: 4px;
+    margin-bottom: 3pt;
   }
   strong {
     font-weight: bold;
-    color: #1a202c;
-  }
-  .highlight-box {
-    background-color: #ebf8ff;
-    border-left: 4px solid #3182ce;
-    padding: 8px 12px;
-    border-radius: 4px;
-    margin: 8px 0;
-    color: #2b6cb0;
-  }
-  a {
-    color: #3182ce;
-    text-decoration: underline;
   }
 </style>
 </head>

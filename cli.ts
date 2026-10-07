@@ -276,9 +276,9 @@ Antworte IMMER im Format:
 </ACTION>
 
 Aktionen & Richtlinien:
-1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive mit professioneller Typografie (Überschriften, Listen, Infoboxen).
+1. "drive_doc": Erstellt ein echtes, natives GOOGLE DOC in Google Drive.
    - title: z. B. "Agenda Ratssitzung 11.10.2026"
-   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8).
+   - content: Verwende für BRG-Ratssitzungs-Agenden exakt die bewährte, schlichte Google-Doc-Vorlagensprache und -Struktur (aus Vorlage 1uVwAQL_XRkPwqBgtJQrulqjyriLpFH2eKqX0ssxLKO8).
      
      STRUKTUR DER AGENDA:
      Agenda der Ratssitzung (Online)
@@ -286,37 +286,36 @@ Aktionen & Richtlinien:
      Protokoll-Referenz: Sitzung vom [Datum der letzten Sitzung]
      Entschuldigt / Abwesend: [Namen falls bekannt]
 
-     1. Eröffnung & Feststellung der Beschlussfähigkeit (Erzmarschall Hardy Engwer)
+     1. Eröffnung & Feststellung der Beschlussfähigkeit
+     Begrüßung durch den Erzmarschall, Feststellung der anwesenden Ritter und Beschlussfähigkeit.
 
-     2. Haupttagesordnungspunkt: Verabschiedung der Ratsstrukturierung & Geschäftsordnung (Erzmarschall Hardy Engwer)
-        - Ziel: Beschlussfassung
-        - Vorlage: Strukturreform des Rates der Ritter (Variante 3: Verbindliche Beschlusskonferenz mit Vorlagenpflicht & Ressortsystem). Keine Verkleinerung auf Zwölferrat, Rat bleibt zentrales Beschlussorgan aller Ritter.
-        - Kernpunkte & Anträge:
-          • Einführung verbindlicher Vorlagenpflicht für alle Beschlussanträge (Problemstellung, Lösungsvorschlag, Ressourcen/Kosten)
-          • Geschäftsordnung: Timeboxing (15 Min / Diskussion), Sitzungsdauer max. 2h, Tagesordnungsversand 3 Tage vorab, Protokollversand innerhalb 48h
-          • Ressortverteilung & Patenschaften (Abstimmung der Ressorts u.a. mit Jakob)
+     2. Haupttagesordnungspunkt: Verabschiedung der Ratsstrukturierung & Geschäftsordnung
+     * Beschlussfassung zur Strukturreform des Rates der Ritter (Variante 3: Verbindliche Beschlusskonferenz mit Vorlagenpflicht & Ressortsystem): Beratung und finale Verabschiedung der von Erzmarschall Hardy Engwer eingereichten Beschlussvorlage. Der Rat bleibt das zentrale Beschlussorgan aller Ritter.
+     * Verbindliche Vorlagenpflicht für alle Anträge: Problemstellung, Lösungsvorschlag, finanzielle und organisatorische Auswirkungen vorab einreichen.
+     * Geschäftsordnung & Ablauf: Verbindliches Timeboxing (max. 15 Minuten pro Diskussionspunkt), Gesamtsitzungsdauer maximal 2 Stunden, Versand der Tagesordnung spätestens 3 Tage vorab, Versand des Ergebnisprotokolls innerhalb von 48 Stunden.
+     * Ressortverteilung & Patenschaften: Feste Zuständigkeiten der Ratsmitglieder (Abstimmung u. a. mit Jakob).
 
-     3. Nachbereitung & offene To-Dos aus der letzten Sitzung (NACHZUHALTENDE PUNKTE AUS DEM LETZTEN PROTOKOLL)
-        WICHTIG: Liste hier alle konkreten, noch offenen Aktionspunkte, Beschlüsse und Aufträge aus dem letzten Ratsprotokoll und den Projekt-Memorys namentlich mit Verantwortlichem auf:
-        - Servantenreform & weltliche Truppenbetreuung: Status des gildenweiten Rekrutierungsaufrufs und Einbindung der Kinderschutz-Schulung (Verantwortlich: Erzmarschall Hardy Engwer / Prior).
-        - Medizinisches Korps / Feldscher-System: Einhaltung des Behandlungsleitfadens, Prüfung der Standard-Ausrüstung und dezentrale Standorte (Verantwortlich: Marco, Melanie, Hardy).
-        - Akademie & Sergeantenqualifizierung: Status des Akademie-Rahmenplans (Gemeinnützigkeit / Förderfähigkeit) und Vorbereitung der Sergeanten-Qualifizierung (Verantwortlich: Jakob Lehmann).
-        - Weitere offene Beschlusspunkte aus vorherigen Protokollen (z. B. Jobbörse / Zeugmeister-Zuständigkeiten / Schildbestände der Komtureien, falls noch offen).
+     3. Nachbereitung & offene To-Dos aus der letzten Sitzung
+     * Servantenreform & weltliche Truppenbetreuung: Status des gildenweiten Rekrutierungsaufrufs und Einbindung der Kinderschutz-Schulung (Verantwortlich: Erzmarschall Hardy Engwer / Prior).
+     * Medizinisches Korps / Feldscher-System: Einhaltung des Behandlungsleitfadens, Prüfung der Standard-Ausrüstung und dezentrale Standorte (Verantwortlich: Marco, Melanie, Hardy).
+     * Akademie & Sergeantenqualifizierung: Status des Akademie-Rahmenplans (Gemeinnützigkeit / Förderfähigkeit) und Vorbereitung der Sergeanten-Qualifizierung (Verantwortlich: Jakob Lehmann).
+     * Vereinseigene Jobbörse: Status des Formblatts für Jobausschreibungen und Pflege der Jobbörse.
+     * Zuständigkeiten der Zeugmeister & Logistik: Auswertung der Zuständigkeiten und Überprüfung der Schildbestände der Komtureien.
 
      4. Aktuelle Themen & Initiativen aus dem Ritterkollegium (Telegram BRG Info)
-        - Mitglieder-Aktivitätsanalyse & EasyVerein-Auswertung (Mikael BRG):
-          • Ziel: Information & Diskussion (ca. 5–10 Min)
-          • Vorstellung detaillierter Grafiken zur Mitgliederaktivität nach Standorten, Veranstaltungsarten und Gattungen sowie deren historische Entwicklung (Beamer-Präsentation).
-        - Mitglieder-Motivation & Beteiligung bei Gilden-Events (Frank Berliner):
-          • Ziel: Diskussion & Initiierung von Maßnahmen
-          • Vorstellung von Vorschlägen zur Steigerung der Teilnahme-Motivation basierend auf den Erkenntnissen als Gastredner beim VdK.
-        - Kodizes & ritterliche Tugenden (Levent Ritter):
-          • Ziel: Abstimmung
-          • Status der Distribution, Überprüfung und Verankerung der 10 Tugenden im Ausbildungs- und Lagerbetrieb.
+     * Mitglieder-Aktivitätsanalyse & EasyVerein-Auswertung (Mikael BRG):
+       - Ziel: Information & Diskussion (ca. 5–10 Min).
+       - Vorstellung detaillierter Grafiken zur Mitgliederaktivität nach Standorten, Veranstaltungsarten und Gattungen sowie deren historische Entwicklung (Beamer-Präsentation).
+     * Mitglieder-Motivation & Beteiligung bei Gilden-Events (Frank Berliner):
+       - Ziel: Diskussion & Initiierung von Maßnahmen.
+       - Vorstellung von Vorschlägen zur Steigerung der Teilnahme-Motivation basierend auf den Erkenntnissen als Gastredner beim VdK.
+     * Kodizes & ritterliche Tugenden (Levent Ritter):
+       - Ziel: Abstimmung & Umsetzung.
+       - Status der Distribution, Überprüfung und Verankerung der 10 ritterlichen Tugenden im Ausbildungs- und Lagerbetrieb.
 
      5. Varia & Sonstiges
-        - Termine kommende Events & nächste Ratssitzung
-        - Kurzfristige Anliegen der Ratsmitglieder
+     * Termine kommende Events & nächste Ratssitzung.
+     * Weitere kurzfristige Anliegen der Ratsmitglieder.
 2. "telegram_send": Nachricht in einen Telegram-Chat posten (z. B. "BRG Info"). targetChat = "BRG Info", body = Nachricht.
 3. "task": Aufgabe in Google Tasks anlegen.
 4. "calendar": Kalendertermin anlegen.

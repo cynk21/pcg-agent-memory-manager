@@ -18,14 +18,13 @@ Begrüßung durch den Erzmarschall.
   - Timeboxing 15 Min
 
 3. Sonstiges
-> Wichtiger Hinweis für alle Ratsmitglieder
+Wichtiger Hinweis für alle Ratsmitglieder
 `;
 
   const html = convertTextToGoogleDocHtml(sampleMarkdown, 'Test Agenda');
   assert.ok(html.includes('<h1>Agenda der Ratssitzung (Online)</h1>'), 'Should contain styled h1');
   assert.ok(html.includes('<h2>1. Eröffnung &amp; Begrüßung</h2>'), 'Should convert top-level numbered items to h2');
   assert.ok(html.includes('<strong>Ziel:</strong> Beschlussfassung'), 'Should convert bold markdown');
-  assert.ok(html.includes('class="meta-row"'), 'Should format meta lines');
-  assert.ok(html.includes('class="highlight-box"'), 'Should format blockquotes');
+  assert.ok(html.includes('class="meta-line"'), 'Should format meta lines');
   assert.ok(html.includes('<ul>'), 'Should format list elements');
 });
