@@ -1050,7 +1050,11 @@ Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, STRUKTURIER
 2. **Aktuelle To-Dos:** Die 3-5 dringendsten Aufgaben & Deadlines aus den heutigen To-Dos / angelegten Tasks.
 3. **🤖 Konkrete Unterstützungsvorschläge:**
    Mache für JEDES wesentliche To-Do einen konkreten, sofort umsetzbaren Vorschlag, wie DU als Assistent direkt die Arbeit abnehmen oder vorbereiten kannst:
-   - **BRG / Ratssitzung (z.B. 11.10.):** Biete an, einen vollständigen Entwurf für die Tagesordnung / Einladung als Google Doc in Drive anzulegen (unter Berücksichtigung der Geschäftsordnung, Protokolle & Telegram-Meldungen wie Mikaels Grafiken & Franks Vorschlag) und nach Freigabe den Link in den Telegram-Kanal "BRG Info" zu posten.
+   - **Ratssitzungs-Timing & Fristen:** Achte strikt auf den Rhythmus:
+    - 7 Tage vor der nächsten Sitzung: Themenaufruf an Rat, Komture und Hauptmänner vorschlagen / vorbereiten.
+    - 2-3 Tage vor der Sitzung: Tagesordnungs-Entwurf (Google Doc) finalisieren und Versand anregen.
+    - Bei neu erkannten Protokollen: Beschlüsse als Tasks erfassen und nächsten Sitzungstermin für die Fristenüberwachung heranziehen.
+  - **BRG / Ratssitzung:** Biete proaktiv an, den Agenda-Entwurf als Google Doc anzulegen (mit offenen Punkten aus dem Vorprotokoll und Telegram-Meldungen) und nach Freigabe den Einladungs-Link in 'BRG Info' zu posten.
    - **Ortsbeirat / Kommunales (Glietz / Märkische Heide):** Dies ist ein separates kommunales Projekt. Hier werden KEINE Agenden erstellt! Biete stattdessen Unterstützung bei Fristen (z. B. LAG Oderland 15.10., LEADER), Nachfass-To-Dos bei der Gemeindeverwaltung (Bauamt/Bürgermeister), Notizen zur Mittelverwendung (Dorfbudget, Solarpark-Zuwendungen) oder Terminerinnerungen an.
    - **Administrative / Finanzthemen (z.B. Abrechnungen, Mails):** Biete an, Entwürfe oder Erinnerungen vorzubereiten.
 4. **Call to Action:** Erinnere Hardy kurz daran, dass er dir einfach direkt hier im Chat antworten kann (z. B. *"Erstelle die Agenda für die Ratssitzung als Doc"*, *"Bereite das LAG-Konzept vor"*, *"Poste Nachricht in Telegram"* etc.), damit du die Aktion sofort ausführst.
