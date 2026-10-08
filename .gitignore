@@ -11,6 +11,8 @@ coverage/
 # Secrets & lokale Zustandsdateien (Token / API-Key / Chat-State)
 .telegram_session.json
 .whatsapp_auth/
+.wwebjs_auth/
+.wwebjs_cache/
 .latest_token.json
 .google-refresh-token.json
 .odoo-mcp-token.json

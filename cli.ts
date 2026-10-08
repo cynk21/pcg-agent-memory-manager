@@ -740,103 +740,64 @@ async function cmdTelegramAuth() {
 }
 
 async function cmdWhatsAppAuth() {
-  console.log('\n--- WhatsApp Authentifizierung (Multi-Device, nur lesend) ---');
-  console.log('Du kannst dich wahlweise per 8-stelligem Kopplungscode (Handynummer) oder QR-Code anmelden.\n');
+  console.log('\n--- WhatsApp Authentifizierung via QR-Code (Headless Chrome Web Session, nur lesend) ---');
+  console.log('Starte Google Chrome im Hintergrund für WhatsApp Web...\n');
 
   try {
     const { default: qrcodeTerminal } = await import('qrcode-terminal');
-    const baileys = await import('@whiskeysockets/baileys');
-    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
-    const authDir = path.join(process.cwd(), '.whatsapp_auth');
+    const wwebjs = await import('whatsapp-web.js');
+    const { Client, LocalAuth } = wwebjs.default || wwebjs;
 
-    const method = (await prompt('Möchtest du die Anmeldung per [1] Kopplungscode (Handynummer) oder [2] QR-Code durchführen? [1/2, Standard: 1]: ')).trim() || '1';
-
-    let phoneNumber = '';
-    if (method === '1' || method.toLowerCase().includes('code') || method.toLowerCase().includes('handy') || method.toLowerCase().includes('tel')) {
-      phoneNumber = (await prompt('Bitte gib deine Telefonnummer im internationalen Format ein (z. B. +491701234567): ')).replace(/[^0-9]/g, '');
+    const chromeCandidates = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe'),
+    ];
+    let chromePath: string | undefined;
+    for (const p of chromeCandidates) {
+      if (fs.existsSync(p)) { chromePath = p; break; }
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(authDir);
-    const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: false }));
+    if (chromePath) {
+      console.log(`Verwende Chrome unter: ${chromePath}`);
+    }
 
-    console.log(`Baileys Version: ${version.join('.')} (Latest: ${isLatest})`);
+    const client = new Client({
+      authStrategy: new LocalAuth({ dataPath: process.cwd() }),
+      puppeteer: {
+        headless: true,
+        executablePath: chromePath,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+      },
+    });
 
     let lastQr = '';
-    const sock = makeWASocket({
-      version,
-      auth: state,
-      printQRInTerminal: false,
-      browser: Browsers ? Browsers.windows('Chrome') : ['Windows', 'Chrome', '131.0.0.0'],
-      syncFullHistory: false,
-      generateHighQualityLinkPreview: false,
-      logger: {
-        level: 'silent',
-        trace: () => {},
-        debug: () => {},
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-        fatal: () => {},
-        child: () => ({
-          level: 'silent',
-          trace: () => {},
-          debug: () => {},
-          info: () => {},
-          warn: () => {},
-          error: () => {},
-          fatal: () => {},
-        }),
-      } as any,
+    client.on('qr', (qr: string) => {
+      if (qr === lastQr) return;
+      lastQr = qr;
+      console.log('\n================= QR-CODE SCANNEN =================\n');
+      qrcodeTerminal.generate(qr, { small: true }, (qrAscii: string) => console.log(qrAscii));
+      console.log('\nSo geht\'s in WhatsApp auf dem Smartphone:');
+      console.log('  1. Einstellungen -> Verknüpfte Geräte -> "Gerät hinzufügen"');
+      console.log('  2. Den obigen QR-Code scannen');
+      console.log('  (Der QR-Code erneuert sich automatisch. Warte auf Scan...)');
     });
 
-    sock.ev.on('creds.update', saveCreds);
-
-    if (phoneNumber && !sock.authState.creds.registered) {
-      setTimeout(async () => {
-        try {
-          console.log(`\nFordere 8-stelligen Kopplungscode von WhatsApp für ${phoneNumber} an...`);
-          const code = await sock.requestPairingCode(phoneNumber);
-          console.log('\n======================================================');
-          console.log(`👉 DEIN WHATSAPP KOPPLUNGSCODE:  ${code?.match(/.{1,4}/g)?.join('-') || code}`);
-          console.log('======================================================\n');
-          console.log('So geht\'s in WhatsApp auf dem Smartphone:');
-          console.log('  1. Einstellungen -> Verknüpfte Geräte -> "Gerät hinzufügen"');
-          console.log('  2. Unten auf "Mit Telefonnummer verknüpfen" (oder "Link with phone number instead") tippen');
-          console.log('  3. Den obigen 8-stelligen Code eingeben\n');
-        } catch (err: any) {
-          console.error('Fehler beim Anfordern des Kopplungscodes:', err?.message || err);
-        }
-      }, 3000);
-    }
-
-    await new Promise<void>((resolve, reject) => {
-      sock.ev.on('connection.update', async (update: any) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (!phoneNumber && qr && qr !== lastQr) {
-          lastQr = qr;
-          console.log('\n================= QR-CODE SCANNEN =================\n');
-          qrcodeTerminal.generate(qr, { small: true }, (qrAscii: string) => console.log(qrAscii));
-          console.log('\nDer QR-Code erneuert sich automatisch. Bitte mit WhatsApp scannen...');
-        }
-
-        if (connection === 'close') {
-          const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-          if (!shouldReconnect) {
-            console.error('\nWhatsApp Verbindung geschlossen: Abgemeldet');
-            reject(new Error('Abgemeldet'));
-          }
-        } else if (connection === 'open') {
-          console.log('\n✅ Erfolgreich bei WhatsApp angemeldet!');
-          console.log('Sitzung wurde lokal in .whatsapp_auth/ gespeichert.');
-          console.log('Ab jetzt liest der Daily-Lauf WhatsApp-Nachrichten automatisch mit (rein lesend).\n');
-          try {
-            sock.end(undefined);
-          } catch {}
-          resolve();
-        }
-      });
+    client.on('ready', async () => {
+      console.log('\n✅ Erfolgreich bei WhatsApp angemeldet!');
+      console.log('Sitzung wurde lokal in .wwebjs_auth/ gespeichert.');
+      console.log('Ab jetzt liest der Daily-Lauf WhatsApp-Nachrichten automatisch mit (rein lesend).\n');
+      try {
+        await client.destroy();
+      } catch {}
+      process.exit(0);
     });
+
+    client.on('auth_failure', (msg: any) => {
+      console.error('\nWhatsApp Authentifizierungsfehler:', msg);
+    });
+
+    await client.initialize();
   } catch (err: any) {
     console.error('Fehler bei der WhatsApp-Authentifizierung:', err?.message || err);
   }
@@ -857,7 +818,7 @@ async function cmdStatus() {
   const tgSession = loadTelegramSessionString();
   const tgApiId = process.env.TELEGRAM_API_ID;
   console.log(`Telegram MTProto:     ${tgSession ? 'angemeldet (.telegram_session.json)' : tgApiId ? 'API_ID vorhanden, nicht angemeldet (npm run agent -- telegram-auth)' : 'nicht konfiguriert'}`);
-  console.log(`WhatsApp MultiDevice: ${isWhatsAppConfigured() ? 'angemeldet (.whatsapp_auth/)' : 'nicht verknüpft (npm run agent -- whatsapp-auth)'}`);
+  console.log(`WhatsApp Web Client:  ${isWhatsAppConfigured() ? 'angemeldet (.wwebjs_auth/)' : 'nicht verknüpft (npm run agent -- whatsapp-auth)'}`);
 
   if (refreshToken) {
     try {
@@ -1192,7 +1153,7 @@ PCG Agent CLI – Befehle:
 
   npm run agent -- auth [--force]      Einmalige Google-Anmeldung (Refresh-Token -> .env)
   npm run agent -- telegram-auth       Einmalige Telegram-Anmeldung (MTProto Session -> .telegram_session.json)
-  npm run agent -- whatsapp-auth       Einmalige WhatsApp-Anmeldung (QR-Code -> .whatsapp_auth/)
+  npm run agent -- whatsapp-auth       Einmalige WhatsApp-Anmeldung (Headless Chrome QR -> .wwebjs_auth/)
   npm run agent -- status              Status von Tokens & letztem Daily-Run
   npm run agent -- daily               Tägliches Update (Tasks anlegen, Drive-Briefing, E-Mail)
   npm run agent -- weekly [--force]    Wochenrückblick & Wochenplan (läuft nur freitags; --force erzwingt)
