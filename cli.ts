@@ -740,16 +740,21 @@ async function cmdTelegramAuth() {
 }
 
 async function cmdWhatsAppAuth() {
-  console.log('\n--- WhatsApp Authentifizierung via QR-Code (Multi-Device, nur lesend) ---');
-  console.log('Es wird ein QR-Code im Terminal angezeigt.');
-  console.log('So geht\'s in WhatsApp auf dem Smartphone:');
-  console.log('  Einstellungen -> Verknüpfte Geräte -> "Gerät hinzufügen" (QR-Scanner öffnet sich)\n');
+  console.log('\n--- WhatsApp Authentifizierung (Multi-Device, nur lesend) ---');
+  console.log('Du kannst dich wahlweise per 8-stelligem Kopplungscode (Handynummer) oder QR-Code anmelden.\n');
 
   try {
     const { default: qrcodeTerminal } = await import('qrcode-terminal');
     const baileys = await import('@whiskeysockets/baileys');
     const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
     const authDir = path.join(process.cwd(), '.whatsapp_auth');
+
+    const method = (await prompt('Möchtest du die Anmeldung per [1] Kopplungscode (Handynummer) oder [2] QR-Code durchführen? [1/2, Standard: 1]: ')).trim() || '1';
+
+    let phoneNumber = '';
+    if (method === '1' || method.toLowerCase().includes('code') || method.toLowerCase().includes('handy') || method.toLowerCase().includes('tel')) {
+      phoneNumber = (await prompt('Bitte gib deine Telefonnummer im internationalen Format ein (z. B. +491701234567): ')).replace(/[^0-9]/g, '');
+    }
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: false }));
@@ -786,10 +791,28 @@ async function cmdWhatsAppAuth() {
 
     sock.ev.on('creds.update', saveCreds);
 
+    if (phoneNumber && !sock.authState.creds.registered) {
+      setTimeout(async () => {
+        try {
+          console.log(`\nFordere 8-stelligen Kopplungscode von WhatsApp für ${phoneNumber} an...`);
+          const code = await sock.requestPairingCode(phoneNumber);
+          console.log('\n======================================================');
+          console.log(`👉 DEIN WHATSAPP KOPPLUNGSCODE:  ${code?.match(/.{1,4}/g)?.join('-') || code}`);
+          console.log('======================================================\n');
+          console.log('So geht\'s in WhatsApp auf dem Smartphone:');
+          console.log('  1. Einstellungen -> Verknüpfte Geräte -> "Gerät hinzufügen"');
+          console.log('  2. Unten auf "Mit Telefonnummer verknüpfen" (oder "Link with phone number instead") tippen');
+          console.log('  3. Den obigen 8-stelligen Code eingeben\n');
+        } catch (err: any) {
+          console.error('Fehler beim Anfordern des Kopplungscodes:', err?.message || err);
+        }
+      }, 3000);
+    }
+
     await new Promise<void>((resolve, reject) => {
       sock.ev.on('connection.update', async (update: any) => {
         const { connection, lastDisconnect, qr } = update;
-        if (qr && qr !== lastQr) {
+        if (!phoneNumber && qr && qr !== lastQr) {
           lastQr = qr;
           console.log('\n================= QR-CODE SCANNEN =================\n');
           qrcodeTerminal.generate(qr, { small: true }, (qrAscii: string) => console.log(qrAscii));
