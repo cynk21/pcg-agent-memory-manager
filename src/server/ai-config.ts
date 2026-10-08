@@ -70,7 +70,7 @@ export function getModelName(customModel?: string, customApiKey?: string, custom
   const settings = loadAISettings();
   const { isGateway } = getEffectiveApiConfig(customApiKey, customBaseUrl);
   const rawModel = customModel?.trim() || settings.model?.trim() || '';
-  const gatewayModels = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.7-flash', 'pcg-auto-pro', 'gemini-2.5-pro', 'claude-sonnet-5', 'gpt-5.4', 'Standard', 'Pro', 'Expert'];
+  const gatewayModels = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.7-flash', 'pcg-auto-pro', 'claude-sonnet-5', 'gpt-5.4', 'Standard', 'Pro', 'Expert'];
   if (isGateway) return gatewayModels.includes(rawModel) ? rawModel : 'gemini-3.8-flash';
   return rawModel && (rawModel.startsWith('gemini-') || rawModel === 'Standard' || rawModel === 'Pro') ? rawModel : 'gemini-3.8-flash';
 }

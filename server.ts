@@ -339,13 +339,13 @@ export async function generateAIContent(options: {
   if (isGateway) {
     const gatewayCandidates = [
       targetModel,
-      'Standard',
       'gemini-3.8-flash',
+      'Standard',
       'Pro',
       'Expert',
       'gemini-3.5-flash',
+      'gemini-3.7-flash',
       'pcg-auto-pro',
-      'gemini-2.5-pro',
       'claude-sonnet-5',
       'gpt-5.4',
       'gpt-auto-pro'
@@ -434,7 +434,7 @@ export async function generateAIContent(options: {
   }
 }
 
-async function generateGeminiContentWithTimeout(ai: any, request: any, timeoutMs = 60000): Promise<any> {
+async function generateGeminiContentWithTimeout(ai: any, request: any, timeoutMs = 180000): Promise<any> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
