@@ -32,6 +32,7 @@ import {
   formatAIError,
 } from './server.ts';
 import { loadTelegramSessionString, saveTelegramSessionString, sendTelegramMessage } from './src/server/telegram-reader.ts';
+import { isWhatsAppConfigured, fetchWhatsAppMessages } from './src/server/whatsapp-reader.ts';
 import { convertTextToGoogleDocHtml } from './src/server/google-doc-formatter.ts';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
@@ -738,6 +739,81 @@ async function cmdTelegramAuth() {
   }
 }
 
+async function cmdWhatsAppAuth() {
+  console.log('\n--- WhatsApp Authentifizierung via QR-Code (Multi-Device, nur lesend) ---');
+  console.log('Es wird ein QR-Code im Terminal angezeigt.');
+  console.log('So geht\'s in WhatsApp auf dem Smartphone:');
+  console.log('  Einstellungen -> Verknüpfte Geräte -> "Gerät hinzufügen" (QR-Scanner öffnet sich)\n');
+
+  try {
+    const { default: qrcodeTerminal } = await import('qrcode-terminal');
+    const baileys = await import('@whiskeysockets/baileys');
+    const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys;
+    const authDir = path.join(process.cwd(), '.whatsapp_auth');
+
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    const { version } = await fetchLatestBaileysVersion();
+
+    let lastQr = '';
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      logger: {
+        level: 'silent',
+        trace: () => {},
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        fatal: () => {},
+        child: () => ({
+          level: 'silent',
+          trace: () => {},
+          debug: () => {},
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+          fatal: () => {},
+        }),
+      } as any,
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    await new Promise<void>((resolve, reject) => {
+      sock.ev.on('connection.update', async (update: any) => {
+        const { connection, lastDisconnect, qr } = update;
+        if (qr && qr !== lastQr) {
+          lastQr = qr;
+          console.log('\n================= QR-CODE SCANNEN =================\n');
+          qrcodeTerminal.generate(qr, { small: true }, (qrAscii: string) => console.log(qrAscii));
+          console.log('\nDer QR-Code erneuert sich automatisch. Bitte mit WhatsApp scannen...');
+        }
+
+        if (connection === 'close') {
+          const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+          if (!shouldReconnect) {
+            console.error('\nWhatsApp Verbindung geschlossen: Abgemeldet');
+            reject(new Error('Abgemeldet'));
+          }
+        } else if (connection === 'open') {
+          console.log('\n✅ Erfolgreich bei WhatsApp angemeldet!');
+          console.log('Sitzung wurde lokal in .whatsapp_auth/ gespeichert.');
+          console.log('Ab jetzt liest der Daily-Lauf WhatsApp-Nachrichten automatisch mit (rein lesend).\n');
+          try {
+            sock.end(undefined);
+          } catch {}
+          resolve();
+        }
+      });
+    });
+  } catch (err: any) {
+    console.error('Fehler bei der WhatsApp-Authentifizierung:', err?.message || err);
+  }
+}
+
 async function cmdStatus() {
   console.log('\nPCG Agent Status\n');
 
@@ -753,6 +829,7 @@ async function cmdStatus() {
   const tgSession = loadTelegramSessionString();
   const tgApiId = process.env.TELEGRAM_API_ID;
   console.log(`Telegram MTProto:     ${tgSession ? 'angemeldet (.telegram_session.json)' : tgApiId ? 'API_ID vorhanden, nicht angemeldet (npm run agent -- telegram-auth)' : 'nicht konfiguriert'}`);
+  console.log(`WhatsApp MultiDevice: ${isWhatsAppConfigured() ? 'angemeldet (.whatsapp_auth/)' : 'nicht verknüpft (npm run agent -- whatsapp-auth)'}`);
 
   if (refreshToken) {
     try {
@@ -1087,6 +1164,7 @@ PCG Agent CLI – Befehle:
 
   npm run agent -- auth [--force]      Einmalige Google-Anmeldung (Refresh-Token -> .env)
   npm run agent -- telegram-auth       Einmalige Telegram-Anmeldung (MTProto Session -> .telegram_session.json)
+  npm run agent -- whatsapp-auth       Einmalige WhatsApp-Anmeldung (QR-Code -> .whatsapp_auth/)
   npm run agent -- status              Status von Tokens & letztem Daily-Run
   npm run agent -- daily               Tägliches Update (Tasks anlegen, Drive-Briefing, E-Mail)
   npm run agent -- weekly [--force]    Wochenrückblick & Wochenplan (läuft nur freitags; --force erzwingt)
@@ -1124,6 +1202,7 @@ async function main() {
     switch (cmd) {
       case 'auth': return await cmdAuth(args.includes('--force'));
       case 'telegram-auth': return await cmdTelegramAuth();
+      case 'whatsapp-auth': return await cmdWhatsAppAuth();
       case 'status': return await cmdStatus();
       case 'daily': return await cmdDaily();
       case 'weekly': return await cmdWeekly(args.includes('--force'));

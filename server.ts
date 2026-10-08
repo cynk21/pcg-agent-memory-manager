@@ -16,6 +16,7 @@ import { fetchRecentChats } from './src/server/chat-reader.ts';
 import { fetchRecentEmails } from './src/server/gmail-reader.ts';
 import { fetchTasks } from './src/server/tasks-reader.ts';
 import { fetchTelegramGroupMessages } from './src/server/telegram-reader.ts';
+import { fetchWhatsAppMessages } from './src/server/whatsapp-reader.ts';
 import { getFileContent, listAllFiles } from './src/server/drive-reader.ts';
 import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readDriveKnowledgeBaseContext } from './src/server/drive-context.ts';
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
@@ -29,6 +30,8 @@ export { fetchRecentEmails };
 export { fetchRecentChats };
 
 export { fetchTelegramGroupMessages };
+
+export { fetchWhatsAppMessages };
 
 export { fetchUpcomingEvents };
 
@@ -2452,6 +2455,7 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     eventsContext,
     chatsContext,
     telegramContext,
+    whatsAppContext,
     tasksContext
   ] = await Promise.all([
     fetchDriveContext(accessToken),
@@ -2459,6 +2463,7 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
     fetchTelegramGroupMessages(recordVerbatimEvidence, 7),
+    fetchWhatsAppMessages(recordVerbatimEvidence, 7),
     fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
@@ -2466,6 +2471,10 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
   const telegramAuthBroken = /Telegram (nicht angemeldet|Authentifizierung abgelaufen)/i.test(telegramContext);
   const telegramWarningBlock = telegramAuthBroken
     ? `> ⚠️ **TELEGRAM-QUELLE AUSGEFALLEN:** Die Telegram-Session ist abgelaufen oder nicht eingerichtet. Dieses Briefing enthält KEINE Telegram-Nachrichten (BRG Info etc.). Bitte einmalig neu anmelden: \`npm run agent -- telegram-auth\`\n\n`
+    : '';
+  const whatsAppAuthBroken = /WhatsApp (nicht angemeldet|Authentifizierung abgelaufen)/i.test(whatsAppContext);
+  const whatsAppWarningBlock = whatsAppAuthBroken
+    ? `> ⚠️ **WHATSAPP-QUELLE AUSGEFALLEN:** Die WhatsApp-Session ist nicht verknüpft oder abgelaufen. Dieses Briefing enthält KEINE WhatsApp-Nachrichten. Bitte einmalig neu anmelden: \`npm run agent -- whatsapp-auth\`\n\n`
     : '';
   const davidAgendaContext = extractDavidOneOnOneAgenda(tasksContext);
   const localMemoryContext = loadLocalMemoryContext();
@@ -2562,6 +2571,9 @@ ${chatsContext}
 --- TELEGRAM (BRG INFO & GILDENKANÄLE) ---
 ${telegramContext}
 
+--- WHATSAPP (GRUPPEN & CHATS) ---
+${whatsAppContext}
+
 --- AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN ---
 ${currentSquadSignals}
 
@@ -2629,19 +2641,22 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   ));
   summary = ensureCriticalProjectTasks(
     summary,
-    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}`,
+    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}\n${whatsAppContext}`,
     tasksContext,
     dateStr,
   );
   summary = ensureMeetingProtocolTasks(
     summary,
-    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}`,
+    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}\n${whatsAppContext}`,
     tasksContext,
     dateStr,
   );
   summary = ensureActionSectionTasks(summary, tasksContext, dateStr);
   if (telegramWarningBlock) {
     summary = telegramWarningBlock + summary;
+  }
+  if (whatsAppWarningBlock) {
+    summary = whatsAppWarningBlock + summary;
   }
 
   try {
