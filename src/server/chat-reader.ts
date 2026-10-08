@@ -7,9 +7,14 @@ export async function fetchRecentChats(auth: any, recordEvidence: RecordEvidence
     const chat = createChatClient(auth);
     const res = await chat.spaces.list({ pageSize: 50 });
     const spaces = res.data.spaces || [];
+    const botSpaceId = process.env.CHAT_SPACE_ID?.trim();
     let context = 'Aktuelle Chat-Räume & Nachrichten:\n';
     for (const space of spaces) {
       if (!space.name) continue;
+      // Eigenen Memory Agent / Bot-Chat-Raum von der Berichterstattung ausschließen
+      if (botSpaceId && (space.name === botSpaceId || space.name === `spaces/${botSpaceId}`)) continue;
+      if (space.displayName && /^(pcg[-_\s]*agent|memory[-_\s]*manager|bot)$/i.test(space.displayName.trim())) continue;
+
       const spaceLabel = space.displayName ? `Raum: "${space.displayName}"` : `Raum: ${space.name}`;
       const chatUrl = `https://chat.google.com/room/${space.name.replace('spaces/', '')}`;
       context += `- ${spaceLabel} | Direktlink: ${chatUrl}\n`;
