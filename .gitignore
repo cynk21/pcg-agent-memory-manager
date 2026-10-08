@@ -13,6 +13,7 @@ coverage/
 .whatsapp_auth/
 .wwebjs_auth/
 .wwebjs_cache/
+session/
 .latest_token.json
 .google-refresh-token.json
 .odoo-mcp-token.json

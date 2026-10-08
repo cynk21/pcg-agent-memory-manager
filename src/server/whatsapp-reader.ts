@@ -4,6 +4,7 @@ import * as path from 'path';
 type RecordEvidence = (inputs: any[]) => void;
 
 const AUTH_DIR = path.join(process.cwd(), '.wwebjs_auth');
+const SESSION_DIR = path.join(process.cwd(), 'session');
 
 // Limits für WhatsApp-Nachrichten
 const MAX_CHATS = 50;
@@ -12,6 +13,12 @@ const MAX_MESSAGES_PER_LOW_PRIORITY_CHAT = 25;
 const MAX_TOTAL_MESSAGES = 600;
 
 export function isWhatsAppConfigured(): boolean {
+  if (fs.existsSync(AUTH_DIR) && fs.existsSync(path.join(AUTH_DIR, 'session-pcg-agent'))) {
+    return true;
+  }
+  if (fs.existsSync(SESSION_DIR) && fs.existsSync(path.join(SESSION_DIR, 'Default'))) {
+    return true;
+  }
   return fs.existsSync(AUTH_DIR) && fs.readdirSync(AUTH_DIR).length > 0;
 }
 
@@ -78,7 +85,11 @@ export async function fetchWhatsAppMessages(
     puppeteer: {
       headless: true,
       executablePath: chromePath,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+      ],
     },
   });
 
@@ -86,7 +97,7 @@ export async function fetchWhatsAppMessages(
     const timeout = setTimeout(async () => {
       try { await client.destroy(); } catch {}
       resolve('(WhatsApp: Zeitüberschreitung beim Laden der Nachrichten - Session prüfen)\n');
-    }, 45000);
+    }, 90000);
 
     client.on('auth_failure', async () => {
       clearTimeout(timeout);
@@ -94,9 +105,28 @@ export async function fetchWhatsAppMessages(
       resolve('(WhatsApp Authentifizierung fehlgeschlagen oder abgelaufen: Bitte "npm run agent -- whatsapp-auth" ausführen)\n');
     });
 
+    client.on('qr', () => {
+      clearTimeout(timeout);
+      try { client.destroy(); } catch {}
+      console.log('[WhatsApp Reader] QR-Event empfangen -> Nicht authentifiziert.');
+      resolve('(WhatsApp nicht angemeldet: Bitte führe "npm run agent -- whatsapp-auth" aus)\n');
+    });
+
+    client.on('loading_screen', (percent: number, message: string) => {
+      console.log(`[WhatsApp Reader] Lädt: ${percent}% - ${message}`);
+    });
+
+    client.on('authenticated', () => {
+      console.log('[WhatsApp Reader] Authentifizierung erfolgreich!');
+    });
+
     client.on('ready', async () => {
       try {
-        const chats = await client.getChats();
+        console.log('[WhatsApp Reader] WhatsApp Web Client ist READY. Lade Chats...');
+        // Warte kurz 3 Sekunden, damit der interne Store vollständig befüllt ist
+        await new Promise(r => setTimeout(r, 3000));
+        const chats = await client.getChats().catch(() => []);
+        console.log(`[WhatsApp Reader] Gefundene Chats: ${chats.length}`);
         const cutoffDate = new Date();
         cutoffDate.setDate(cutoffDate.getDate() - daysBack);
         const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
@@ -104,45 +134,65 @@ export async function fetchWhatsAppMessages(
         const excludePatterns = getExcludedChatPatterns();
         const priorityPatterns = getPriorityChatPatterns();
 
-        const activeChats = chats
+        // Sortiere Chats nach letzter Nachricht (aktuellste zuerst)
+        const sortedChats = chats
           .filter((c: any) => !c.isArchived)
-          .filter((c: any) => (c.timestamp || 0) >= cutoffTimestamp)
-          .filter((c: any) => !isExcludedChat(c.name || '', excludePatterns))
-          .sort((a: any, b: any) => {
-            const aPrio = isPriorityChat(a.name || '', priorityPatterns) ? 1 : 0;
-            const bPrio = isPriorityChat(b.name || '', priorityPatterns) ? 1 : 0;
-            if (aPrio !== bPrio) return bPrio - aPrio;
-            return (b.timestamp || 0) - (a.timestamp || 0);
-          })
-          .slice(0, MAX_CHATS);
-
-        if (activeChats.length === 0) {
-          clearTimeout(timeout);
-          try { await client.destroy(); } catch {}
-          return resolve('(WhatsApp: Keine aktiven Chats mit Nachrichten im 7-Tage-Fenster gefunden)\n');
-        }
+          .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
 
         let context = 'Aktuelle WhatsApp-Nachrichten (letzte 7 Tage, rein lesend):\n';
         let totalMessages = 0;
+        let processedChats = 0;
 
-        for (const chat of activeChats) {
+        for (const chat of sortedChats) {
+          if (processedChats >= MAX_CHATS) break;
           const chatName = chat.name || 'Unbekannter Chat';
+          if (isExcludedChat(chatName, excludePatterns)) continue;
+
           const isPrio = isPriorityChat(chatName, priorityPatterns);
           const limit = isPrio ? MAX_MESSAGES_PER_CHAT : MAX_MESSAGES_PER_LOW_PRIORITY_CHAT;
 
-          const messages = await chat.fetchMessages({ limit });
-          const recentMessages = messages
+          let rawMessages: any[] = [];
+          try {
+            rawMessages = await client.pupPage.evaluate(async (chatId: string, msgLimit: number) => {
+              const chat = (window as any).Store?.Chat?.get(chatId);
+              if (chat?.msgs?.models) {
+                return chat.msgs.models.slice(-msgLimit).map((m: any) => ({
+                  id: m.id?._serialized || m.id?.id,
+                  timestamp: m.t || 0,
+                  body: m.body || '',
+                  from: m.id?.participant?._serialized || m.from?._serialized || m.from || 'Teilnehmer',
+                  notifyName: m.notifyName || m._data?.notifyName || '',
+                }));
+              }
+              const msgModels = (window as any).Store?.Msg?.models || [];
+              return msgModels
+                .filter((m: any) => (m.id?.remote?._serialized || m.id?.remote) === chatId)
+                .slice(-msgLimit)
+                .map((m: any) => ({
+                  id: m.id?._serialized || m.id?.id,
+                  timestamp: m.t || 0,
+                  body: m.body || '',
+                  from: m.id?.participant?._serialized || m.from?._serialized || m.from || 'Teilnehmer',
+                  notifyName: m.notifyName || m._data?.notifyName || '',
+                }));
+            }, chat.id?._serialized || chat.id, limit);
+          } catch {
+            continue;
+          }
+
+          const recentMessages = (rawMessages || [])
             .filter((m: any) => (m.timestamp || 0) >= cutoffTimestamp)
             .sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0));
 
           if (recentMessages.length === 0) continue;
 
+          processedChats++;
           context += `\n## Chat: "${chatName}"${chat.isGroup ? ' (Gruppe)' : ''}\n`;
 
           for (const msg of recentMessages) {
             if (totalMessages >= MAX_TOTAL_MESSAGES) break;
 
-            const sender = msg.author || msg.from || 'Teilnehmer';
+            const sender = msg.notifyName || msg.from || 'Teilnehmer';
             const body = msg.body ? msg.body.trim().replace(/\r?\n+/g, ' ') : '(Kein Text / Medien)';
             const dateStr = msg.timestamp
               ? new Date(msg.timestamp * 1000).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
@@ -151,12 +201,12 @@ export async function fetchWhatsAppMessages(
             if (recordEvidence) {
               recordEvidence([{
                 sourceType: 'whatsapp',
-                sourceId: `whatsapp:${chat.id?._serialized || chat.id}:${msg.id?._serialized || msg.id}`,
+                sourceId: `whatsapp:${chat.id}:${msg.id}`,
                 content: `${chatName} - ${sender} [${dateStr}]: ${body}`,
                 sourceTimestamp: msg.timestamp ? new Date(msg.timestamp * 1000).toISOString() : new Date().toISOString(),
                 author: sender,
                 sourceUrl: `https://web.whatsapp.com`,
-                parentId: String(chat.id?._serialized || chat.id),
+                parentId: String(chat.id),
                 metadata: { platform: 'whatsapp', groupTitle: chatName, isGroup: Boolean(chat.isGroup) },
               }]);
             }
@@ -168,11 +218,14 @@ export async function fetchWhatsAppMessages(
 
         clearTimeout(timeout);
         try { await client.destroy(); } catch {}
+        if (totalMessages === 0) {
+          return resolve('(WhatsApp: Keine neuen Nachrichten im 7-Tage-Fenster gefunden)\n');
+        }
         resolve(context);
       } catch (err: any) {
         clearTimeout(timeout);
         try { await client.destroy(); } catch {}
-        resolve(`(WhatsApp-Nachrichten konnten nicht vollständig gelesen werden: ${err?.message || err})\n`);
+        resolve(`(WhatsApp-Nachrichten konnten nicht vollständig gelesen werden: ${err?.message || err?.stack || err})\n`);
       }
     });
 

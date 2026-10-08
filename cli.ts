@@ -763,11 +763,15 @@ async function cmdWhatsAppAuth() {
     }
 
     const client = new Client({
-      authStrategy: new LocalAuth({ dataPath: process.cwd() }),
+      authStrategy: new LocalAuth({ clientId: 'pcg-agent', dataPath: path.join(process.cwd(), '.wwebjs_auth') }),
       puppeteer: {
         headless: true,
         executablePath: chromePath,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-gpu',
+        ],
       },
     });
 
@@ -787,6 +791,8 @@ async function cmdWhatsAppAuth() {
       console.log('\n✅ Erfolgreich bei WhatsApp angemeldet!');
       console.log('Sitzung wurde lokal in .wwebjs_auth/ gespeichert.');
       console.log('Ab jetzt liest der Daily-Lauf WhatsApp-Nachrichten automatisch mit (rein lesend).\n');
+      // Warte 5 Sekunden vor dem Beenden, damit Chrome alle Session-Cookies und IndexedDB-Stores flusht
+      await new Promise(r => setTimeout(r, 5000));
       try {
         await client.destroy();
       } catch {}
