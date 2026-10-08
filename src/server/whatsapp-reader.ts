@@ -73,6 +73,8 @@ export async function fetchWhatsAppMessages(
         version,
         auth: state,
         printQRInTerminal: false,
+        browser: ['Windows', 'Chrome', '131.0.0.0'],
+        syncFullHistory: false,
         logger: {
           level: 'silent',
           trace: () => {},
