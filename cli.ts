@@ -748,19 +748,22 @@ async function cmdWhatsAppAuth() {
   try {
     const { default: qrcodeTerminal } = await import('qrcode-terminal');
     const baileys = await import('@whiskeysockets/baileys');
-    const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys;
+    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
     const authDir = path.join(process.cwd(), '.whatsapp_auth');
 
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
-    const { version } = await fetchLatestBaileysVersion();
+    const { version, isLatest } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: false }));
+
+    console.log(`Baileys Version: ${version.join('.')} (Latest: ${isLatest})`);
 
     let lastQr = '';
     const sock = makeWASocket({
       version,
       auth: state,
       printQRInTerminal: false,
-      browser: ['Windows', 'Chrome', '131.0.0.0'],
+      browser: Browsers ? Browsers.windows('Chrome') : ['Windows', 'Chrome', '131.0.0.0'],
       syncFullHistory: false,
+      generateHighQualityLinkPreview: false,
       logger: {
         level: 'silent',
         trace: () => {},

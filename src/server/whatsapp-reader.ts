@@ -59,9 +59,9 @@ export async function fetchWhatsAppMessages(
       return '(WhatsApp-Modul @whiskeysockets/baileys nicht geladen: Bitte "npm run agent -- whatsapp-auth" prüfen)\n';
     }
 
-    const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileys;
+    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, fetchLatestBaileysVersion } = baileys;
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const { version } = await fetchLatestBaileysVersion();
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307], isLatest: false }));
 
     let sock: any;
     const socketPromise = new Promise<any>((resolve, reject) => {
@@ -73,8 +73,9 @@ export async function fetchWhatsAppMessages(
         version,
         auth: state,
         printQRInTerminal: false,
-        browser: ['Windows', 'Chrome', '131.0.0.0'],
+        browser: Browsers ? Browsers.windows('Chrome') : ['Windows', 'Chrome', '131.0.0.0'],
         syncFullHistory: false,
+        generateHighQualityLinkPreview: false,
         logger: {
           level: 'silent',
           trace: () => {},
