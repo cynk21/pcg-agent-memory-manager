@@ -1108,6 +1108,28 @@ function extractDailyTodoSection(summary: string): string {
   return combined || '## Handlungsempfehlungen\n\nKeine aktuellen To-Dos gefunden.';
 }
 
+function buildFallbackProactiveMessage(todoSection: string, createdTasks: { title: string; id?: string; error?: string }[] = []): string {
+  const taskTitles = createdTasks.filter(t => !t.error).map(t => t.title);
+  const items: string[] = [];
+
+  for (const t of taskTitles) {
+    const lower = t.toLowerCase();
+    if (lower.includes('rat') || lower.includes('agenda') || lower.includes('themenaufruf') || lower.includes('kodex') || lower.includes('matrix')) {
+      items.push(`• **${t}**\n  👉 Vorschlag: *Soll ich hierfür einen Entwurf / ein Google Doc vorbereiten oder die Abstimmung in Telegram 'BRG Info' vorstrukturieren?*`);
+    } else if (lower.includes('glietz') || lower.includes('ortsbeirat') || lower.includes('kämmerei') || lower.includes('budget') || lower.includes('lag') || lower.includes('leader')) {
+      items.push(`• **${t}**\n  👉 Vorschlag: *Soll ich eine Frist-Erinnerung, ein Anschreiben an die Verwaltung oder eine Aufstellung der Mittel entwerfen?*`);
+    } else {
+      items.push(`• **${t}**\n  👉 Vorschlag: *Soll ich dazu einen Arbeitsentwurf oder einen Kalendertermin anlegen?*`);
+    }
+  }
+
+  const suggestionsBlock = items.length > 0
+    ? `\n\n🤖 **Konkrete Unterstützungsvorschläge:**\n${items.join('\n\n')}`
+    : '\n\n🤖 **Wie kann ich dich heute unterstützen?** Antworte einfach direkt hier im Chat mit deinem Auftrag (z. B. Doc erstellen, Mail entwerfen, Termin eintragen).';
+
+  return `☀️ **Daily To-Dos & Assistenz-Vorschläge**\n\n${todoSection}${suggestionsBlock}\n\n💬 *Antworte einfach direkt im Chat mit der Nummer oder der gewünschten Aktion!*`;
+}
+
 async function generateDailyChatProactiveMessage(summary: string, createdTasks: { title: string; id?: string; error?: string }[] = []): Promise<string> {
   const todoSection = extractDailyTodoSection(summary);
   const taskList = createdTasks.length > 0
@@ -1116,24 +1138,27 @@ async function generateDailyChatProactiveMessage(summary: string, createdTasks: 
 
   const prompt = `Du bist der PCG Agent Memory Manager, der proaktive persönliche KI-Assistent und strategische Sparringspartner von Hardy Engwer (IT/KI Consultant, Ortsvorsteher Glietz, Erzmarschall Berliner Rittergilde).
 
-Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, STRUKTURIERTE und HANDLUNGSORIENTIERTE Nachricht für Google Chat:
+Das Daily-Briefing wurde soeben ausgeführt. Erstelle eine KOMPAKTE, STRUKTURIERTE und ECHTE HANDLUNGSORIENTIERTE Nachricht für Google Chat:
 
+STRUKTUR:
 1. **Überschrift:** ☀️ **Daily To-Dos & Assistenz-Vorschläge (<Datum>)**
-2. **Aktuelle To-Dos:** Die 3-5 dringendsten Aufgaben & Deadlines aus den heutigen To-Dos / angelegten Tasks.
-3. **🤖 Konkrete Unterstützungsvorschläge:**
-   Mache für JEDES wesentliche To-Do einen konkreten, sofort umsetzbaren Vorschlag, wie DU als Assistent direkt die Arbeit abnehmen oder vorbereiten kannst:
-   - **Ratssitzungs-Timing & Fristen:** Achte strikt auf den Rhythmus:
-    - 7 Tage vor der nächsten Sitzung: Themenaufruf an Rat, Komture und Hauptmänner vorschlagen / vorbereiten.
-    - 2-3 Tage vor der Sitzung: Tagesordnungs-Entwurf (Google Doc) finalisieren und Versand anregen.
-    - Bei neu erkannten Protokollen: Beschlüsse als Tasks erfassen und nächsten Sitzungstermin für die Fristenüberwachung heranziehen.
-  - **BRG / Ratssitzung:** Biete proaktiv an, den Agenda-Entwurf als Google Doc anzulegen (mit offenen Punkten aus dem Vorprotokoll und Telegram-Meldungen) und nach Freigabe den Einladungs-Link in 'BRG Info' zu posten.
-   - **Ortsbeirat / Kommunales (Glietz / Märkische Heide):** Dies ist ein separates kommunales Projekt. Hier werden KEINE Agenden erstellt! Biete stattdessen Unterstützung bei Fristen (z. B. LAG Oderland 15.10., LEADER), Nachfass-To-Dos bei der Gemeindeverwaltung (Bauamt/Bürgermeister), Notizen zur Mittelverwendung (Dorfbudget, Solarpark-Zuwendungen) oder Terminerinnerungen an.
-   - **Administrative / Finanzthemen (z.B. Abrechnungen, Mails):** Biete an, Entwürfe oder Erinnerungen vorzubereiten.
-4. **Call to Action:** Erinnere Hardy kurz daran, dass er dir einfach direkt hier im Chat antworten kann (z. B. *"Erstelle die Agenda für die Ratssitzung als Doc"*, *"Bereite das LAG-Konzept vor"*, *"Poste Nachricht in Telegram"* etc.), damit du die Aktion sofort ausführst.
+2. **Aktuelle To-Dos:** Die wichtigsten 3-5 Aufgaben & Deadlines aus den heutigen To-Dos / angelegten Tasks kurz auflisten.
+3. **🤖 Konkrete Unterstützungsvorschläge (PFLICHT):**
+   Formuliere für JEDE wesentliche Aufgabe mindestens einen konkreten, sofort per Chat-Antwort bestätigbaren Handlungsvorschlag im Format:
+   - **[Aufgaben-Titel]:** *"Soll ich [konkrete Aktion, z.B. Google Doc erstellen / Telegram-Post formulieren / Termin eintragen]?"*
+   
+   Kontext-Regeln:
+   - **Ratssitzung / BRG:** 
+     - 7 Tage vor Sitzung: Themenaufruf für Telegram BRG Info vorschlagen.
+     - 2-3 Tage vor Sitzung: Agenda als Google Doc vorschlagen.
+     - Nach Sitzung / bei Beschlüssen: Matrix-Konzept, Kodexe, Protokoll-Aktionen als Docs vorbereiten oder Deadlines tracken.
+   - **Ortsbeirat / Kommunales (Glietz):** Keine Agenden! Sondern: Fristen (LAG 15.10.), Nachfass-Mails an Bauamt/Kämmerei, Budget-Übersichten.
+   - **Verwaltung / Finanzen:** E-Mail-Entwürfe, Beleg-Listen oder Erinnerungen.
+4. **Call to Action:** Kurzer Hinweis am Ende: *"Antworte einfach direkt hier im Chat, um eine Aktion auszulösen!"*
 
-FORMATIERUNG:
-- Keine Tabellen!
-- Klare Bullet Points, prägnant, professionell und direkt aktionsfähig.
+WICHTIG:
+- Liefere UNBEDINGT konkrete Vorschläge unter Abschnitt 3 — niemals nur To-Dos auflisten!
+- Keine Markdown-Tabellen!
 
 BRIEFING-TO-DOS:
 ${todoSection}
@@ -1146,10 +1171,14 @@ ${taskList}`;
       contents: prompt,
       config: { temperature: 0.2 },
     });
-    return (response.text || todoSection).trim();
+    const text = response.text?.trim();
+    if (text && (text.includes('Unterstützungsvorschläge') || text.includes('Vorschlag') || text.includes('Soll ich'))) {
+      return text;
+    }
+    return buildFallbackProactiveMessage(todoSection, createdTasks);
   } catch (err: any) {
     console.warn('Fehler bei der Generierung des proaktiven Chat-Briefings:', err?.message || err);
-    return `${todoSection}\n\n🤖 *Wie kann ich dich heute bei diesen Aufgaben unterstützen? Antworte einfach hier im Chat.*`;
+    return buildFallbackProactiveMessage(todoSection, createdTasks);
   }
 }
 
