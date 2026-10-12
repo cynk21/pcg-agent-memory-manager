@@ -21,10 +21,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit
 
-      - name: Run quality checks
-        run: npm run check
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm run test
+
+      - name: Run production build
+        run: npm run build
+
+      - name: Run secret scan
+        run: npm run secrets
