@@ -5,5 +5,9 @@ $processes = Get-CimInstance Win32_Process | Where-Object {
 }
 
 if (-not $processes) {
-  Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'agent', '--', 'chat-watch' -WorkingDirectory $projectRoot -WindowStyle Hidden
+  while ($true) {
+    $watcher = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run', 'agent', '--', 'chat-watch' -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+    Wait-Process -Id $watcher.Id
+    Start-Sleep -Seconds 5
+  }
 }
