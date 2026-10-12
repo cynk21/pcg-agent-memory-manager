@@ -2,6 +2,28 @@ import { google } from 'googleapis';
 
 type RecordEvidence = (inputs: any[]) => void;
 
+export async function fetchChatSpaceContext(auth: any, spaceName: string, createChatClient = (value: any) => google.chat({ version: 'v1', auth: value })) {
+  const chat = createChatClient(auth);
+  const messages: any[] = [];
+  let messagePageToken: string | undefined;
+  let messagePage = 0;
+  do {
+    const page = await chat.spaces.messages.list({ parent: spaceName, pageSize: 100, pageToken: messagePageToken, orderBy: 'createTime desc' });
+    messages.push(...(page.data.messages || []));
+    messagePageToken = page.data.nextPageToken || undefined;
+    messagePage += 1;
+  } while (messagePageToken && messagePage < 10);
+  const recentCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  return messages
+    .filter(message => (!message.createTime || Date.parse(message.createTime) >= recentCutoff) && !/^\[PCG-Agent\]/i.test(String(message.text || '').trim()))
+    .map(message => {
+      const sender = message.sender?.displayName || message.sender?.name || 'User';
+      const time = message.createTime ? ` [${new Date(message.createTime).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}]` : '';
+      return `- ${sender}${time}: "${String(message.text || '(Kein Text)').replace(/\n+/g, ' ')}"`;
+    })
+    .join('\n');
+}
+
 export async function fetchRecentChats(auth: any, recordEvidence: RecordEvidence, createChatClient = (value: any) => google.chat({ version: 'v1', auth: value })) {
   try {
     const chat = createChatClient(auth);

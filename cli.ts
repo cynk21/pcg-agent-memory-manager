@@ -28,6 +28,7 @@ import {
   formatAIError,
 } from './server.ts';
 import { searchVerbatimEvidence } from './verbatim-evidence-ledger.ts';
+import { fetchChatSpaceContext } from './src/server/chat-reader.ts';
 import { queryTemporalTimeline, upsertTemporalFact } from './temporal-facts.ts';
 import { recordDecision, searchDecisions } from './decision-memory.ts';
 import { runMemoryMcpStdio } from './memory-mcp-server.ts';
@@ -508,14 +509,15 @@ Regeln:
 - Verwende für Datumsangaben ausschließlich das heutige Datum oder die Zukunft. Das heutige Datum ist ${new Date().toISOString().slice(0, 10)}.
 Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
 
-  const needsCurrentPeopleContext = /squad|team|anne|david|urlaub|urlauber|abwesen|neuzugang|neue personen|dazu kommen|dazukommen|transfer/i.test(text);
+  const needsCurrentPeopleContext = /squad|team|anne|david|urlaub|urlauber|abwesen|neuzugang|neue personen|dazu kommen|dazukommen|transfer|feedback|änderungswunsch|aenderungswunsch|agenda|biweekly|kollegen|nachrichtenverlauf|meeting|besprechung/i.test(text);
   let currentPeopleContext = '';
   if (needsCurrentPeopleContext) {
-    const [liveChats, upcomingEvents] = await Promise.all([
+    const [liveChats, upcomingEvents, dataAiSquadChat] = await Promise.all([
       fetchRecentChats(oauth2Client, () => {}),
       fetchUpcomingEvents(oauth2Client, () => {}),
+      fetchChatSpaceContext(oauth2Client, 'spaces/AAQAzcnt2RM'),
     ]);
-    currentPeopleContext = `\n\nAKTUELLE LIVE-QUELLEN FÜR TEAM-/URLAUBSFRAGEN (bevorzuge diese gegenüber älteren Memory-Angaben):\n${liveChats.slice(-60000)}\n\nKALENDER/ABWESENHEITEN:\n${upcomingEvents.slice(-20000)}`;
+    currentPeopleContext = `\n\nAKTUELLE LIVE-CHAT-QUELLEN (bevorzuge diese gegenüber älteren Memory-Angaben):\n${liveChats.slice(-60000)}\n\nGEZIELTER LIVE-CHAT: Data / AI Squad (DACH)\n${dataAiSquadChat || '(Keine aktuellen Nachrichten im Data / AI Squad (DACH) gefunden.)'}\n\nKALENDER/ABWESENHEITEN:\n${upcomingEvents.slice(-20000)}`;
   }
 
   const response = await generateAIContent({
