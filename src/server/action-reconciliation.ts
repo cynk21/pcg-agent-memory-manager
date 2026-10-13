@@ -155,6 +155,19 @@ export function ensureMeetingProtocolTasks(summary: string, sourceContext: strin
   const taskStates = extractGoogleTaskStates(tasksContext);
   const actions: { title: string; notes: string }[] = [];
   const actionPattern = /(?:^|\n)\s*(?:[*•-]\s*)?\[Hardy(?:\s+Engwer)?\]\s*([^:\n]+):\s*([^\n]*(?:\n(?!\s*(?:[*•-]\s*)?\[(?:Hardy|David|Die Gruppe)\])[^\n]*)*)/gi;
+  // FREETEXT_PROTOCOL_PATTERN: Satz wie "Hardy übernimmt bis zur Ratssitzung ..." in Protokollquellen.
+  const freetextPattern = /(?:^|[.\n])\s*(Hardy(?:\s+Engwer)?\s+(?:übernimmt|übernehme|wird|soll)\s+[^.\n]+)/gi;
+  for (const match of sourceContext.matchAll(freetextPattern)) {
+    const sentence = match[1].trim().replace(/\s+/g, ' ');
+    const before = sourceContext.slice(0, match.index ?? 0);
+    const sourceHeader = before.split('\n').reverse().find(line => /DOKUMENT|TRANSKRIPT|PROTOKOLL/i.test(line)) || '';
+    if (!/protokoll|transkript|transcript|notes by gemini|besprechung|meeting/i.test(sourceHeader)) continue;
+    if (/coaching|mentoring\s*j|schwingdings/i.test(sentence)) continue;
+    const label = sentence.replace(/[.,;:]+$/, '').slice(0, 120);
+    const sourceUrl = findNearestSourceUrl(sourceContext, match.index ?? 0);
+    const notes = buildShortTaskNotes(sentence, sourceUrl);
+    if (!actions.some(action => areTaskTextsSimilar(action.title, label))) actions.push({ title: label, notes });
+  }
   for (const match of sourceContext.matchAll(actionPattern)) {
   const label = match[1].trim().replace(/\s+/g, ' ');
   const sourceUrl = findNearestSourceUrl(sourceContext, match.index ?? 0);
