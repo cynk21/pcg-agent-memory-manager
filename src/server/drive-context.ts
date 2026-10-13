@@ -88,7 +88,7 @@ export async function fetchDriveKnowledgeBaseContext(accessToken: string, driveF
       const content = await dependencies.getFileContent(drive, file.id, file.mimeType);
       if (typeof content !== 'string') continue;
       const isTranscriptLike = /transkript|transcript|protokoll|notes by gemini|besprechung|meeting/i.test(file.path || file.name || '');
-      const contentLimit = isTranscriptLike ? 12000 : 2500;
+      const contentLimit = isTranscriptLike ? 60000 : 2500;
       const trimmedContent = content.length > contentLimit ? `${content.slice(0, contentLimit)}\n...[Gekürzt bei ${contentLimit} Zeichen – Volltext: ${file.webViewLink || file.id}]` : content;
 
       const modified = file.modifiedTime ? new Date(file.modifiedTime) : null;
