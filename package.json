@@ -42,7 +42,13 @@
   },
   "overrides": {
     "@grpc/grpc-js": "^1.13.6",
-    "postcss-selector-parser": "^7.1.6"
+    "postcss-selector-parser": "^7.1.6",
+    "puppeteer": "^25.13.0",
+    "puppeteer-core": "^25.13.0",
+    "extract-zip": "^2.0.1",
+    "proxy-agent": "^8.0.2",
+    "basic-ftp": "^6.2.3",
+    "get-uri": "^8.0.1"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.20",
