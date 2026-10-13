@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 import { GoogleGenAI } from '@google/genai';
@@ -20,6 +21,7 @@ import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readD
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
 import { recordVerbatimEvidence } from './src/server/evidence.ts';
 import { validateTextField } from './src/server/input-validation.ts';
+import { buildEvidencePacket } from './src/server/evidence-packet.ts';
 import { callRemoteMcpTool, fetchAtlassianJiraStatusContext, fetchOdooProjectStatusContext, getConfiguredRemoteMcpServerAsync } from './src/server/remote-mcp.ts';
 
 export { fetchTasks };
@@ -53,9 +55,27 @@ app.use('/api', createApiAuthMiddleware({
 const TOKEN_FILE = path.join(process.cwd(), '.latest_token.json');
 const CRON_STATUS_FILE = path.join(process.cwd(), '.last_cron_status.json');
 const CHAT_PENDING_PROPOSALS_FILE = path.join(process.cwd(), '.chat-pending-proposals.json');
+const DAILY_SOURCE_SNAPSHOT_FILE = path.join(process.cwd(), '.daily-source-snapshot.json');
 const CHAT_MARKER = '[PCG-Agent]';
 
 let latestAccessToken: string | null = null;
+
+function dailySourceDigest(input: { drive: string; emails: string; events: string; chats: string; tasks: string }): string {
+  return crypto.createHash('sha256').update(JSON.stringify(input), 'utf8').digest('hex');
+}
+
+function hasDailySourceChanged(digest: string): boolean {
+  try {
+    const snapshot = JSON.parse(fs.readFileSync(DAILY_SOURCE_SNAPSHOT_FILE, 'utf8')) as { digest?: string };
+    return snapshot.digest !== digest;
+  } catch {
+    return true;
+  }
+}
+
+function saveDailySourceDigest(digest: string): void {
+  fs.writeFileSync(DAILY_SOURCE_SNAPSHOT_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), digest }, null, 2), 'utf8');
+}
 
 export class GoogleAuthError extends Error {
   constructor(message = "Google API-Authentifizierung abgelaufen. Bitte neu anmelden.") {
@@ -2569,6 +2589,8 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
   const davidAgendaContext = extractDavidOneOnOneAgenda(tasksContext);
   const localMemoryContext = loadLocalMemoryContext();
+  const sourceDigest = dailySourceDigest({ drive: driveContext, emails: emailsContext, events: eventsContext, chats: chatsContext, tasks: tasksContext });
+  const sourceChanged = hasDailySourceChanged(sourceDigest);
   const currentSquadSignals = extractCurrentSquadSignals(enrichedDriveContext, chatsContext);
   const projectCapacityEvidence = extractProjectCapacityEvidence(enrichedDriveContext, emailsContext, chatsContext);
   const skillContext = loadSkillContext([
@@ -2581,9 +2603,12 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
   ]);
 
   const nowStr = new Date().toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' });
-  const compactDriveContext = compactEvidenceForDaily(enrichedDriveContext);
-  const compactEmailsContext = compactEvidenceForDaily(emailsContext, 3000);
-  const compactChatsContext = compactEvidenceForDaily(chatsContext, 3000);
+  const evidenceKeywords = ['projekt', 'budget', 'scope', 'sow', 'staffing', 'kapaz', 'offen', 'entscheidung', 'heads up', 'änderung'];
+  const compactEvidencePacket = buildEvidencePacket([
+    { name: 'Google Drive', context: enrichedDriveContext, budget: 36000, keywords: evidenceKeywords },
+    { name: 'E-Mail', context: emailsContext, budget: 18000, keywords: [...evidenceKeywords, 'zugewiesen', 'allocated'] },
+    { name: 'Google Chat', context: chatsContext, budget: 18000, keywords: [...evidenceKeywords, 'feedback', 'agenda', 'biweekly'] },
+  ]);
 
   const prompt = `Erstelle ein fokussiertes, tägliches Management-Briefing und Update basierend auf allen verknüpften Quellen (Google Drive Dokumente & Meeting-Protokolle, E-Mails, Kalender, Google Chat und Google Tasks).
 
@@ -2650,16 +2675,10 @@ ${skillContext}
   • [Quelle: <Name>](<URL>)
 
 --- GOOGLE DRIVE (MEETING NOTES & DOKUMENTE) ---
- ${compactDriveContext}
-
---- E-MAILS ---
- ${compactEmailsContext}
+  ${compactEvidencePacket}
 
 --- KALENDER ---
 ${eventsContext}
-
---- CHATS ---
- ${compactChatsContext}
 
 --- AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN ---
 ${currentSquadSignals}
@@ -2749,12 +2768,15 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   try {
     // Keep structured memory current on every daily run; operators can disable
     // the AI curation explicitly for maintenance windows.
-    if (process.env.ENABLE_DAILY_MEMORY_CURATION !== 'false') {
+    if (process.env.ENABLE_DAILY_MEMORY_CURATION !== 'false' && (sourceChanged || process.env.FORCE_DAILY_MEMORY_CURATION === 'true')) {
       const generatedMemoryFiles = await Promise.race([
         generateStructuredMemoryConcepts({ driveContext, emailsContext, eventsContext, chatsContext, tasksContext, localMemoryContext }),
         new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('Memory-Kuration Timeout nach 300000ms')), 300000)),
       ]);
       console.log(`[Memory Curation] ${generatedMemoryFiles.length} OKF-Konzept(e) aktualisiert.`);
+      saveDailySourceDigest(sourceDigest);
+    } else if (process.env.ENABLE_DAILY_MEMORY_CURATION !== 'false') {
+      console.log('[Memory Curation] Übersprungen: unveränderter Quellenstand seit letzter Kuration.');
     } else {
       console.log('[Memory Curation] Im Daily standardmäßig übersprungen; Memory-Sync bleibt aktiv.');
     }

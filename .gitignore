@@ -16,8 +16,10 @@ coverage/
 .atlassian-mcp-token.json
 .chat-state.json
 .chat-pending-proposals.json
+.chat-memory.json
 .ai_settings.json
 .last_cron_status.json
+.daily-source-snapshot.json
 agent-memory/
 .evidence-ledger/
 .antigravity/
