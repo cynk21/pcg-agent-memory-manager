@@ -6,6 +6,25 @@ type DriveDependencies = {
   loadLocalMemoryContext: () => string;
 };
 
+/**
+ * Wandelt eine Europa/Berlin-Ortszeit (Google-Meet-Dateinamen) in Epoch-ms um.
+ * Unabhängig von der Zeitzone des Servers/Runners (lokal Berlin, CI = UTC).
+ */
+export function berlinLocalToEpoch(date: string, hh: string, mm: string): number {
+  const guess = Date.parse(`${date}T${hh}:${mm}:00Z`);
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Berlin', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const p: Record<string, string> = Object.fromEntries(
+    fmt.formatToParts(new Date(guess)).map(part => [part.type, part.value]),
+  );
+  const berlinAsUtc = Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}Z`);
+  const offsetMs = berlinAsUtc - guess;
+  return guess - offsetMs;
+}
+
 export function enrichTimestampTranscriptLinks(driveContext: string, eventsContext: string): string {
   const eventPattern = /- .*?([^\n(]+)\(([^)]+) bis ([^)]+)\).*?Direktlink:\s*(https?:\/\/[^\s|]+)/g;
   const events: { summary: string; end: number; url: string }[] = [];
@@ -18,7 +37,7 @@ export function enrichTimestampTranscriptLinks(driveContext: string, eventsConte
     (block, name, body) => {
       const timestamp = name.match(/Transkript_(\d{4}-\d{2}-\d{2})[_-](\d{2})[-:](\d{2})/i);
       if (!timestamp || events.length === 0) return `${block}\n[TRANSKRIPT-ZUORDNUNG: ungeklärt – kein passender Kalenderzeitpunkt ermittelbar]`;
-      const transcriptTime = Date.parse(`${timestamp[1]}T${timestamp[2]}:${timestamp[3]}:00`);
+      const transcriptTime = berlinLocalToEpoch(timestamp[1], timestamp[2], timestamp[3]);
       const transcriptText = body.slice(0, 1800).toLowerCase();
       const candidates = events.map(event => {
         const minutesAfterEnd = (transcriptTime - event.end) / 60000;
