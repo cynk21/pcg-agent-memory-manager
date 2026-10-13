@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 
 type RecordEvidence = (inputs: any[]) => void;
 
@@ -44,6 +45,28 @@ function isExcludedChat(title: string, excludePatterns: string[]): boolean {
 function isPriorityChat(title: string, priorityPatterns: string[]): boolean {
   const t = title.toLowerCase();
   return priorityPatterns.some((p: string) => t.includes(p));
+}
+
+/** Stabile, nicht rückrechenbare Kurzkennung (SHA-256) statt Telefonnummer/LID. */
+export function maskWhatsAppId(raw: string): string {
+  return 'wa-' + createHash('sha256').update(raw).digest('hex').slice(0, 10);
+}
+
+/** Erkennt Telefonnummern und WhatsApp-Kennungen (@lid, @c.us, @s.whatsapp.net, @g.us). */
+export function isWhatsAppIdentifier(value: string): boolean {
+  const v = value.trim();
+  return /@(lid|c\.us|s\.whatsapp\.net|g\.us)\b/i.test(v) || /^\+?[\d\s()-]{7,}$/.test(v);
+}
+
+/** Absendername ohne Kennung; Nummern und LIDs werden zu einem neutralen Platzhalter. */
+export function displayWhatsAppSender(value?: string): string {
+  if (!value || isWhatsAppIdentifier(value)) return 'Teilnehmer';
+  return value;
+}
+
+/** Chat-Name ohne Kennung; Chats, deren Name eine Kennung ist, erhalten eine maskierte Kennung. */
+export function displayChatName(value: string): string {
+  return isWhatsAppIdentifier(value) ? `Chat ${maskWhatsAppId(value)}` : value;
 }
 
 function getChromeExecutablePath(): string | undefined {
@@ -188,6 +211,17 @@ export async function fetchWhatsAppMessages(
             if (aPrio !== bPrio) return bPrio - aPrio;
             return b.timestamp - a.timestamp;
           });
+
+        // Datenschutz: Telefonnummern und WhatsApp-Kennungen nie im Klartext weitergeben.
+        for (const c of extractedChats) {
+          c.name = displayChatName(c.name);
+          c.id = maskWhatsAppId(String(c.id));
+          c.messages = c.messages.map((m: any) => ({
+            ...m,
+            id: maskWhatsAppId(String(m.id)),
+            sender: displayWhatsAppSender(m.sender),
+          }));
+        }
 
         if (extractedChats.length === 0) {
           return finish('(WhatsApp: Keine aktiven Chats mit Nachrichten im Zeitfenster gefunden)\n');
