@@ -1842,6 +1842,35 @@ export async function createGoogleTaskDirect(title: string, notes?: string, dueD
   return { id: insertRes.data.id, title, notes, dueDate };
 }
 
+/**
+ * Legt eine Google Task an. Schlägt der Aufruf fehl (z. B. "Invalid Value" durch
+ * überlange oder fehlerhafte Notizen), wird mit gekürzter, bereinigter Notiz erneut
+ * versucht und zuletzt ohne Notiz/Fälligkeit, damit ein Protokoll-Punkt nie verloren geht.
+ */
+export async function createTaskWithFallback(title: string, notes: string, dueDate: string, tokenOverride?: string) {
+  const cleanTitle = title.replace(/\s+/g, ' ').trim().slice(0, 500);
+  const cleanNotes = notes
+    .replace(/\[Gekürzt bei \d[\d.]* Zeichen\][\s\S]*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const attempts: { notes: string; due: string | undefined }[] = [
+    { notes: cleanNotes.slice(0, 8000), due: dueDate },
+    { notes: cleanNotes.slice(0, 500), due: dueDate },
+    { notes: '', due: undefined },
+  ];
+  let lastError: any;
+  for (const attempt of attempts) {
+    try {
+      return await createGoogleTaskDirect(cleanTitle, attempt.notes, attempt.due, tokenOverride);
+    } catch (err: any) {
+      if (isAuthError(err)) throw err;
+      lastError = err;
+      console.warn(`[Task Fallback] Versuch fehlgeschlagen für "${cleanTitle}": ${err?.message || err}`);
+    }
+  }
+  throw lastError;
+}
+
 app.post('/api/actions/task', async (req, res) => {
   const token = (req as any).googleToken;
   try {
@@ -2705,7 +2734,7 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
             if (!tp.details?.dueDate) {
               console.warn(`[Task Due Date] Kein dueDate für "${title}"; verwende ${dateStr}.`);
             }
-            const r = await createGoogleTaskDirect(title, notes, dueDate, accessToken);
+            const r = await createTaskWithFallback(title, notes, dueDate, accessToken);
             createdTasks.push({ title, id: r.id });
             createdTitles.push(title);
             console.log(`Google Task angelegt: ${title} (ID: ${r.id})`);
