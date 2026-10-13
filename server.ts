@@ -1517,13 +1517,33 @@ function ensureCriticalProjectTasks(summary: string, sourceContext: string, task
   return `${summary.trim()}\n\n<ACTION_PROPOSALS>\n${JSON.stringify([proposal], null, 2)}\n</ACTION_PROPOSALS>`;
 }
 
+/** Sucht die nächstliegende Direktlink-URL vor einer Fundstelle im Quellkontext. */
+function findNearestSourceUrl(sourceContext: string, index: number): string {
+  const before = sourceContext.slice(0, index);
+  const docHeaders = [...before.matchAll(/Direktlink:\s*(https?:\/\/[^\s|\]\)]+)/g)];
+  if (docHeaders.length > 0) return docHeaders[docHeaders.length - 1][1];
+  const anyUrls = [...before.matchAll(/https?:\/\/[^\s|\]\)]+/g)];
+  return anyUrls.length > 0 ? anyUrls[anyUrls.length - 1][0] : '';
+}
+
+/** Kurze, lesbare Aufgaben-Notiz mit Link zum Quelldokument (kein Transkript-Volltext). */
+function buildShortTaskNotes(rawNotes: string, sourceUrl: string): string {
+  const cleaned = rawNotes
+    .replace(/\[Gekürzt bei [^\]]*\][\s\S]*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const short = cleaned.length > 400 ? `${cleaned.slice(0, 397).trim()}…` : cleaned;
+  return sourceUrl ? `${short}\n\nQuelle: ${sourceUrl}` : short;
+}
+
 export function ensureMeetingProtocolTasks(summary: string, sourceContext: string, tasksContext: string, dueDate: string): string {
   const taskStates = extractGoogleTaskStates(tasksContext);
   const actions: { title: string; notes: string }[] = [];
   const actionPattern = /(?:^|\n)\s*(?:[*•-]\s*)?\[Hardy(?:\s+Engwer)?\]\s*([^:\n]+):\s*([^\n]*(?:\n(?!\s*(?:[*•-]\s*)?\[(?:Hardy|David|Die Gruppe)\])[^\n]*)*)/gi;
   for (const match of sourceContext.matchAll(actionPattern)) {
   const label = match[1].trim().replace(/\s+/g, ' ');
-  const notes = match[2].replace(/\s+/g, ' ').trim();
+  const sourceUrl = findNearestSourceUrl(sourceContext, match.index ?? 0);
+  const notes = buildShortTaskNotes(match[2], sourceUrl);
   if (!label || !notes || /^(?:status|aktueller stand|zusammenfassung)$/i.test(label)) continue;
   if (/coaching|mentoring\s*j|schwingdings/i.test(label) || /coaching|mentoring\s*j|schwingdings/i.test(notes)) continue;
     const title = /jost/i.test(`${label} ${notes}`) && /angebot|status/i.test(`${label} ${notes}`)

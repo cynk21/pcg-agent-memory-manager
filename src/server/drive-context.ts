@@ -87,7 +87,10 @@ export async function fetchDriveKnowledgeBaseContext(accessToken: string, driveF
     for (const file of eligibleFiles.slice(0, 20)) {
       const content = await dependencies.getFileContent(drive, file.id, file.mimeType);
       if (typeof content !== 'string') continue;
-      const trimmedContent = content.length > 2500 ? `${content.slice(0, 2500)}\n...[Gekürzt bei 2.500 Zeichen]` : content;
+      const isTranscriptLike = /transkript|transcript|protokoll|notes by gemini|besprechung|meeting/i.test(file.path || file.name || '');
+      const contentLimit = isTranscriptLike ? 12000 : 2500;
+      const trimmedContent = content.length > contentLimit ? `${content.slice(0, contentLimit)}\n...[Gekürzt bei ${contentLimit} Zeichen – Volltext: ${file.webViewLink || file.id}]` : content;
+
       const modified = file.modifiedTime ? new Date(file.modifiedTime) : null;
       const dateLabel = modified ? modified.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
       const futurePlan = /einarbeitung|onboarding|mitarbeiter|plan|september|schulung|welcome|new\s*joiner/i.test(file.path || file.name) || /einarbeitung|onboarding|september|neuer\s*mitarbeiter/i.test(trimmedContent.slice(0, 500));
