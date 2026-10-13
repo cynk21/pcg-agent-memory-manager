@@ -44,6 +44,7 @@ const ATLASSIAN_MCP_TOKEN_FILE = path.join(ROOT, '.atlassian-mcp-token.json');
 const CHAT_MARKER = '[PCG-Agent]';
 const CHAT_STATE_FILE = path.join(ROOT, '.chat-state.json');
 const CHAT_PENDING_PROPOSALS_FILE = path.join(ROOT, '.chat-pending-proposals.json');
+const CHAT_MEMORY_FILE = path.join(ROOT, '.chat-memory.json');
 
 const DEFAULT_CLIENT_ID = '261415172337-16a674uqih6mk269b0hj8q61qguq6scp.apps.googleusercontent.com';
 const REDIRECT_PORT = Number(process.env.GOOGLE_REDIRECT_PORT || 4315);
@@ -354,6 +355,23 @@ function saveChatState(lastCreateTime: string) {
   fs.writeFileSync(CHAT_STATE_FILE, JSON.stringify({ lastCreateTime, updatedAt: new Date().toISOString() }, null, 2), 'utf-8');
 }
 
+function loadChatMemory(): { time: string; user: string; assistant: string }[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CHAT_MEMORY_FILE, 'utf8'));
+    return Array.isArray(parsed.entries) ? parsed.entries.slice(-100) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveChatMemory(entries: { time: string; user: string; assistant: string }[]) {
+  fs.writeFileSync(CHAT_MEMORY_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), entries: entries.slice(-100) }, null, 2), 'utf8');
+}
+
+function formatChatMemory(entries: { time: string; user: string; assistant: string }[]): string {
+  return entries.map(entry => `[${entry.time}] Hardy: ${entry.user}\n[${entry.time}] Agent: ${entry.assistant}`).join('\n---\n').slice(-50000);
+}
+
 function loadPendingChatProposals(): any[] {
   try { return JSON.parse(fs.readFileSync(CHAT_PENDING_PROPOSALS_FILE, 'utf8')).proposals || []; } catch { return []; }
 }
@@ -440,7 +458,7 @@ async function generateTaskAgentSuggestions(tasks: { title: string; id?: string 
   });
 }
 
-async function handleAgentSuggestionResponse(text: string, token: string, conversationContext = ''): Promise<string | null> {
+async function handleAgentSuggestionResponse(text: string, token: string, conversationContext = '', chatMemoryContext = ''): Promise<string | null> {
   if (!/\b(ok|ja|bestätig|bestat|mach|umsetz\w*|erstelle|entwurf|draft)\b/i.test(text)) return null;
   let suggestions: { taskTitle: string; suggestion: string }[] = [];
   try { suggestions = JSON.parse(fs.readFileSync(CHAT_PENDING_PROPOSALS_FILE, 'utf8')).suggestions || []; } catch { return null; }
@@ -451,7 +469,7 @@ async function handleAgentSuggestionResponse(text: string, token: string, conver
     : suggestions.find(item => /entwurf|draft/i.test(text) && /entwurf|draft|nachricht|mail|email/i.test(item.suggestion)) || suggestions[0];
   try {
     const response = await generateAIContent({
-      contents: `Hardy möchte diesen Agenten-Vorschlag ausführen:\nTask: ${selected.taskTitle}\nAgenten-Vorschlag: ${selected.suggestion}\nHardys Antwort: ${text}\n\nBISHERIGER CHAT-KONTEXT:\n${conversationContext}\n\nLOKALES MEMORY (zuerst verwenden):\n${loadLocalMemoryContext().slice(0, 30000)}\n\nErstelle jetzt den angeforderten Entwurf. Wenn eine konkrete Tatsache im Memory fehlt oder veraltet wirkt, greife auf die zugehörigen Transkripte, E-Mails, Odoo-, Jira- oder Kalenderquellen zurück. Sende oder veröffentliche nichts.`,
+       contents: `Hardy möchte diesen Agenten-Vorschlag ausführen:\nTask: ${selected.taskTitle}\nAgenten-Vorschlag: ${selected.suggestion}\nHardys Antwort: ${text}\n\nBISHERIGER CHAT-KONTEXT:\n${conversationContext}\n\nPERSISTENTER CHAT-MEMORY-KONTEXT:\n${chatMemoryContext}\n\nLOKALES MEMORY (zuerst verwenden):\n${loadLocalMemoryContext().slice(0, 30000)}\n\nErstelle jetzt den angeforderten Entwurf. Wenn eine konkrete Tatsache im Memory fehlt oder veraltet wirkt, greife auf die zugehörigen Transkripte, E-Mails, Odoo-, Jira- oder Kalenderquellen zurück. Sende oder veröffentliche nichts.`,
       config: {
         temperature: 0.0,
         systemInstruction: 'Erstelle ausschließlich den konkreten Entwurf, den Hardy angefordert hat. Keine Analyse, keine ACTION_PROPOSALS, keine automatische Ausführung. Wenn Empfänger oder Projektkontext fehlen, markiere die fehlenden Angaben kurz.',
@@ -487,7 +505,7 @@ async function cmdChatSend(text: string) {
   console.log(`Nachricht gesendet (${res.data.name})`);
 }
 
-async function processChatCommand(text: string, token: string, oauth2Client: any, conversationContext = ''): Promise<string> {
+async function processChatCommand(text: string, token: string, oauth2Client: any, conversationContext = '', chatMemoryContext = ''): Promise<string> {
   const systemInstruction = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (Squad Lead DATA / AI Consultant bei PCG). Interpretiere die folgende Chat-Nachricht von Hardy und übersetze sie in GENAU EIN JSON-Aktionsobjekt. Antworte ausschließlich mit:
 
 <ACTION>
@@ -521,7 +539,7 @@ Antworte NUR mit dem <ACTION>-Block, kein anderer Text.`;
   }
 
   const response = await generateAIContent({
-    contents: `Chat-Nachricht von Hardy: ${text}\n\nBISHERIGER CHAT-KONTEXT:\n${conversationContext}\n\nLOKALES MEMORY (erste Referenz für die Antwort):\n${loadLocalMemoryContext().slice(0, 20000)}${currentPeopleContext}\n\nWenn die Antwort daraus nicht belastbar möglich ist, müssen bei einer konkreten Aufgabenbearbeitung die passenden aktuellen Primärquellen nachgeladen werden: Transkripte, E-Mails, Odoo, Jira oder Kalender. Bei Team-, Neuzugangs- oder Urlaubsfragen nenne nur Personen und Zeiträume, die in den aktuellen Live-Quellen oder im Memory belegt sind. Wenn eine Quelle fehlt, sage konkret, welche Quelle nicht zugänglich war.`,
+    contents: `Chat-Nachricht von Hardy: ${text}\n\nBISHERIGER CHAT-KONTEXT:\n${conversationContext}\n\nPERSISTENTER CHAT-MEMORY-KONTEXT:\n${chatMemoryContext}\n\nLOKALES MEMORY (erste Referenz für die Antwort):\n${loadLocalMemoryContext().slice(0, 20000)}${currentPeopleContext}\n\nBei Folgeaufgaben zuerst den persistenten Chat-Memory-Kontext auf bereits ausgeführte Schritte, Entwürfe, Empfänger, Projekte und Entscheidungen prüfen. Nichts doppelt ausführen, was dort bereits als erledigt dokumentiert ist. Wenn der Kontext nicht ausreicht, frage gezielt nach. Wenn die Antwort daraus nicht belastbar möglich ist, müssen bei einer konkreten Aufgabenbearbeitung die passenden aktuellen Primärquellen nachgeladen werden: Transkripte, E-Mails, Odoo, Jira oder Kalender. Bei Team-, Neuzugangs- oder Urlaubsfragen nenne nur Personen und Zeiträume, die in den aktuellen Live-Quellen oder im Memory belegt sind. Wenn eine Quelle fehlt, sage konkret, welche Quelle nicht zugänglich war.`,
     config: { temperature: 0.0, systemInstruction },
   });
 
@@ -682,6 +700,7 @@ async function cmdChatProcess() {
 
   console.log(`${commands.length} neue Chat-Befehle gefunden. Verarbeite...`);
   const replies: string[] = [];
+  const chatMemory = loadChatMemory();
   for (const cmd of commands) {
     console.log(`- Befehl: ${cmd.text.slice(0, 80)}`);
     const conversationContext = messages
@@ -689,11 +708,15 @@ async function cmdChatProcess() {
       .slice(-10)
       .map(message => `${message.text || ''}`.slice(0, 2500))
       .join('\n---\n');
+    const chatMemoryContext = formatChatMemory(chatMemory);
     await chat.spaces.messages.create({
       parent: spaceId,
       requestBody: { text: `${CHAT_MARKER} Ich bearbeite deine Anfrage und melde mich mit dem Ergebnis.` },
     });
-    replies.push((await handleAgentSuggestionResponse(cmd.text, accessToken, conversationContext)) || (await confirmPendingChatProposals(cmd.text, accessToken)) || await processChatCommand(cmd.text, accessToken, oauth2Client, conversationContext));
+    const reply = (await handleAgentSuggestionResponse(cmd.text, accessToken, conversationContext, chatMemoryContext)) || (await confirmPendingChatProposals(cmd.text, accessToken)) || await processChatCommand(cmd.text, accessToken, oauth2Client, conversationContext, chatMemoryContext);
+    replies.push(reply);
+    chatMemory.push({ time: new Date().toISOString(), user: cmd.text, assistant: reply });
+    saveChatMemory(chatMemory);
   }
 
   if (newMax) saveChatState(newMax);
