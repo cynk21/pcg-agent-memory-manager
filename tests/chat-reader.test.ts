@@ -6,12 +6,12 @@ test('reads chat spaces and records message evidence', async () => {
   const evidence: any[] = [];
   const chat = {
     spaces: {
-      list: async () => ({ data: { spaces: [{ name: 'spaces/hha', displayName: 'HHA Gateway' }] } }),
+      list: async () => ({ data: { spaces: [{ name: 'spaces/beispiel', displayName: 'Beispiel Raum' }] } }),
       messages: {
         list: async () => ({ data: { messages: [{
-          name: 'spaces/hha/messages/1',
+          name: 'spaces/beispiel/messages/1',
           createTime: '2026-09-18T08:00:00Z',
-          text: 'WireGuard Public Keys an Timo senden',
+          text: 'Bitte Zugangsschlüssel an Kollegen senden',
           sender: { displayName: 'Hardy' },
         }] } }),
       },
@@ -20,9 +20,9 @@ test('reads chat spaces and records message evidence', async () => {
 
   const context = await fetchRecentChats({}, input => evidence.push(...input), () => chat as any);
 
-  assert.match(context, /Raum: "HHA Gateway"/);
+  assert.match(context, /Raum: "Beispiel Raum"/);
   assert.match(context, /Hardy/);
-  assert.match(context, /WireGuard Public Keys an Timo senden/);
+  assert.match(context, /Bitte Zugangsschlüssel an Kollegen senden/);
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0].sourceType, 'chat');
 });

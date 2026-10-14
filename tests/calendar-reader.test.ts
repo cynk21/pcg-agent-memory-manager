@@ -10,7 +10,7 @@ test('filters ignored internal meetings and records relevant events', async () =
     events: {
       list: async () => ({ data: { items: [
         { id: 'ignored', summary: 'Thursdays for Data', start: { dateTime: start }, end: { dateTime: end } },
-        { id: 'relevant', summary: 'HHA AI Gateway Sync', start: { dateTime: start }, end: { dateTime: end }, htmlLink: 'https://calendar.example/hha', attendees: [{ displayName: 'Mario' }] },
+        { id: 'relevant', summary: 'Beispiel Projekt Sync', start: { dateTime: start }, end: { dateTime: end }, htmlLink: 'https://calendar.example/beispiel', attendees: [{ displayName: 'Teammitglied' }] },
       ] } }),
     },
   };
@@ -18,8 +18,8 @@ test('filters ignored internal meetings and records relevant events', async () =
   const context = await fetchUpcomingEvents({}, input => evidence.push(...input), () => calendar as any);
 
   assert.doesNotMatch(context, /Thursdays for Data/);
-  assert.match(context, /HHA AI Gateway Sync/);
-  assert.match(context, /Teilnehmer: Mario/);
+  assert.match(context, /Beispiel Projekt Sync/);
+  assert.match(context, /Teilnehmer: Teammitglied/);
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0].sourceType, 'calendar');
 });

@@ -46,7 +46,7 @@ export async function fetchUpcomingEvents(auth: any, recordEvidence: RecordEvide
       else if (eventDateISO < todayISO) tag = '[VERGANGEN]';
       else if (eventDateISO > todayISO) tag = '[VORAUSSCHAU / NÄCHSTE TAGE]';
 
-      const customerMeeting = /schwarz|dsv|use\s*case|kunde|client|customer|workshop|pitch|review|briefing|squad/i.test(summary) || /schwarz|dsv|use\s*case|kunde|client|customer/i.test(desc);
+      const customerMeeting = /use\s*case|kunde|client|customer|workshop|pitch|review|briefing|squad/i.test(summary) || /use\s*case|kunde|client|customer/i.test(desc);
       if (customerMeeting) {
         if (eventDateISO === todayISO) tag += ' [⭐ KUNDENTERMIN HEUTE - BRIEFING & NOTIZEN!]';
         else if (eventDateISO === tomorrowISO || eventDateISO === nextMondayISO) tag += ' [⭐ KUNDENTERMIN MORGEN/MONTAG - VORBEREITUNG SPÄTESTENS HEUTE (1 TAG VORHER) DURCHFÜHREN!]';

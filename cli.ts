@@ -23,6 +23,7 @@ import {
   performDailyUpdate,
   performWeeklyReview,
   createGoogleTaskDirect,
+  completeGoogleTaskByTitle,
   getOAuth2Client,
   getDriveClient,
   driveFolderId,
@@ -919,6 +920,17 @@ async function cmdTask(args: string[]) {
   console.log(`Task angelegt: ${result.title || title}${result.id ? ` (ID: ${result.id})` : ''}`);
 }
 
+async function cmdTaskDone(args: string[]) {
+  const title = args.find((a) => !a.startsWith('-'));
+  if (!title) {
+    console.error('Nutzung: npm run agent -- task-done "Exakter Titel des offenen Tasks"');
+    process.exit(1);
+  }
+  const accessToken = await getAccessToken();
+  const result = await completeGoogleTaskByTitle(title, accessToken);
+  console.log(`Task erledigt: ${result.title} (ID: ${result.id})`);
+}
+
 async function cmdEmail(args: string[]) {
   const to = flagValue(args, '--to');
   const subject = flagValue(args, '--subject');
@@ -1013,7 +1025,7 @@ async function cmdFactUpsert(args: string[]) {
   const sourceUrl = flagValue(args, '--source-url');
 
   if (!subject || !predicate || !object) {
-    console.error('Nutzung: npm run agent -- fact-upsert --subject "Panda" --predicate "capacity_status" --object "looking_for_projects" [--from ISO] [--source-url URL]');
+    console.error('Nutzung: npm run agent -- fact-upsert --subject "<Name aus Quelle>" --predicate "capacity_status" --object "looking_for_projects" [--from ISO] [--source-url URL]');
     process.exit(1);
   }
 
@@ -1152,7 +1164,7 @@ STRUKTUR:
      - 7 Tage vor Sitzung: Themenaufruf für Telegram BRG Info vorschlagen.
      - 2-3 Tage vor Sitzung: Agenda als Google Doc vorschlagen.
      - Nach Sitzung / bei Beschlüssen: Matrix-Konzept, Kodexe, Protokoll-Aktionen als Docs vorbereiten oder Deadlines tracken.
-   - **Ortsbeirat / Kommunales (Glietz):** Keine Agenden! Sondern: Fristen (LAG 15.10.), Nachfass-Mails an Bauamt/Kämmerei, Budget-Übersichten.
+   - **Ortsbeirat / Kommunales (Glietz):** Keine Agenden! Sondern: Fristen aus aktuellen Quellen, Nachfass-Mails an die zuständige Verwaltung, Budget-Übersichten.
    - **Verwaltung / Finanzen:** E-Mail-Entwürfe, Beleg-Listen oder Erinnerungen.
 4. **Call to Action:** Kurzer Hinweis am Ende: *"Antworte einfach direkt hier im Chat, um eine Aktion auszulösen!"*
 
@@ -1232,6 +1244,7 @@ async function main() {
       case 'weekly': return await cmdWeekly(args.includes('--force'));
       case 'todos': return await cmdTodos();
       case 'task': return await cmdTask(args.slice(1));
+      case 'task-done': return await cmdTaskDone(args.slice(1));
       case 'email': return await cmdEmail(args.slice(1));
       case 'calendar': return await cmdCalendar(args.slice(1));
       case 'evidence-search': return await cmdEvidenceSearch(args.slice(1));

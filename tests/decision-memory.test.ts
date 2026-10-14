@@ -8,30 +8,30 @@ import { recordDecision, searchDecisions } from '../decision-memory.ts';
 test('records a decision with rationale and alternatives', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-test-'));
   const decision = recordDecision({
-    title: 'FNTV Restbudget nutzen',
-    project: 'freenet TV',
-    decision: 'Kleinere Anfragen über 35.5h Restbudget abwickeln statt neuem Projekt',
+    title: 'Restbudget nutzen',
+    project: 'Projekt Alpha',
+    decision: 'Kleinere Anfragen über Restbudget abwickeln statt neuem Projekt',
     rationale: 'Vermeidet Overhead von Sammelprojekten',
     alternativesConsidered: ['Neues Sammelprojekt anlegen', 'Einzelfaktura pro Ticket'],
     owner: 'Hardy Engwer',
     date: '2026-08-26',
     sourceUrl: 'https://docs.google.com/document/d/doc-1',
-    tags: ['budget', 'freenet'],
+    tags: ['budget', 'beispiel'],
   }, tmpDir);
 
-  assert.equal(decision.project, 'freenet TV');
+  assert.equal(decision.project, 'Projekt Alpha');
   assert.equal(decision.alternativesConsidered.length, 2);
 
-  const results = searchDecisions({ project: 'freenet TV' }, tmpDir);
+  const results = searchDecisions({ project: 'Projekt Alpha' }, tmpDir);
   assert.equal(results.length, 1);
-  assert.equal(results[0].title, 'FNTV Restbudget nutzen');
+  assert.equal(results[0].title, 'Restbudget nutzen');
 });
 
 test('filters decisions by query term and tag', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'decision-test-'));
   recordDecision({
-    title: 'K&B Gemini Model Choice',
-    project: 'Koenig & Bauer',
+    title: 'Projekt Beta Modellwahl',
+    project: 'Projekt Beta',
     decision: 'Gemini 2.5 Flash weiter nutzen statt 3.7 Flash',
     rationale: 'Gemini 3.7 Flash erwies sich als zu kostenintensiv',
     alternativesConsidered: ['Gemini 3.7 Flash', 'Claude Sonnet via Vertex'],
@@ -40,8 +40,8 @@ test('filters decisions by query term and tag', () => {
   }, tmpDir);
 
   recordDecision({
-    title: 'Lorenz Funding Abwicklung',
-    project: 'Lorenz Snack-World',
+    title: 'Förderabwicklung Beispiel',
+    project: 'Projekt Gamma',
     decision: 'Intern umbuchen statt Funding-Antrag einreichen',
     rationale: 'Nicht Hardys Aufgabe und Funding läuft aus',
     alternativesConsidered: ['Screenshots und Antrag manuell einreichen'],
@@ -50,9 +50,9 @@ test('filters decisions by query term and tag', () => {
 
   const costDecisions = searchDecisions({ query: 'kostenintensiv' }, tmpDir);
   assert.equal(costDecisions.length, 1);
-  assert.equal(costDecisions[0].project, 'Koenig & Bauer');
+  assert.equal(costDecisions[0].project, 'Projekt Beta');
 
   const fundingDecisions = searchDecisions({ tag: 'funding' }, tmpDir);
   assert.equal(fundingDecisions.length, 1);
-  assert.equal(fundingDecisions[0].title, 'Lorenz Funding Abwicklung');
+  assert.equal(fundingDecisions[0].title, 'Förderabwicklung Beispiel');
 });

@@ -8,15 +8,15 @@ Unterstütze Hardys Aufgaben und Verantwortlichkeiten als Ortsvorsteher in Gliet
 
 ### 1. Dorfbudget & Kommunale Mittel
 - Erfassung, Verwaltung und Nachverfolgung der Mittelverwendung des Dorfbudgets für Glietz.
-- Prüfung und Abstimmung von Zuwendungen und gesetzlichen Mitteln (z. B. Solarpark Leibchel-Glietz, § 6 EEG / 0,2 Cent pro kWh, freiwillige Zuwendungen der StreamTec Solutions AG).
+- Prüfung und Abstimmung von Zuwendungen und Fördermitteln, sofern aktuelle Quellen darauf verweisen.
 - Finanzierung lokaler Gemeinschaftsmaßnahmen, Dorfentwicklung und Brandschutz/Feuerwehr.
 
 ### 2. Bürgeranliegen & Dorfentwicklung
-- Bürgerbeteiligung, Anträge und Anliegen der Einwohner (z. B. Gehwegsanierung Glietzer Dorfstraße, Spielplatz, Infrastruktur).
+- Bürgerbeteiligung, Anträge und Anliegen der Einwohner, nur soweit aktuelle Quellen (Mail, Chat, Drive, Telegram/WhatsApp) sie belegen.
 - Abstimmung mit der Bauverwaltung und Gemeindeverwaltung Märkische Heide.
 
 ### 3. Förderprogramme & Fördermittelanträge
-- Fristen und Anträge für Förderprogramme (z. B. LEADER, LAG Oderland Regionalbudget, kommunale Sonderförderungen).
+- Fristen und Anträge für Förderprogramme, jeweils nur mit aktuellem Quellenbeleg und Stichtag.
 - Vorbereitung der Beschlusslagen und Nachweise für den Ortsbeirat und die Gemeindevertretung.
 
 ### 4. Ortsbeiratssitzungen & Beschlüsse
@@ -27,8 +27,8 @@ Unterstütze Hardys Aufgaben und Verantwortlichkeiten als Ortsvorsteher in Gliet
 
 Im täglichen Briefing wird unter Abschnitt **2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)** dynamisch aufgeführt:
 - **Dorfbudget & Finanzen:** Aktueller Stand, offene Mittel, Freigaben oder anstehende Verwendungen.
-- **Projekte & Bürgeranliegen:** Gehwegsanierung, Solarpark-Zuwendungen, Dorfprojekte, Stand der Verwaltungskommunikation.
-- **Fördermittel & Fristen:** Stichtage für Anträge (z. B. LAG Oderland, LEADER).
+- **Projekte & Bürgeranliegen:** Aktuelle Vorgänge laut datierter Quellen, mit Direktlink.
+- **Fördermittel & Fristen:** Stichtage aus aktuellen Quellen, keine statischen Fristen.
 - **Offene Entscheidungen & Aufgaben:** Anstehende Ortsbeiratstermine, Beschlussvorlagen oder To-dos für Hardy.
 - Jede Information muss quellenbasiert mit Direktlink belegt sein. Wenn keine aktuellen Workspace-Meldungen vorliegen, wird dies transparent vermerkt.
 

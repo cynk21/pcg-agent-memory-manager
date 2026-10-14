@@ -29,7 +29,7 @@
 2. Die lokale API validiert Token und Kontoinhaber gegen `GOOGLE_ALLOWED_EMAIL`.
 3. Workspace-Rohdaten (Drive, Gmail, Chat, Kalender, Tasks) werden unverändert im lokalen **Verbatim Evidence Ledger** (`.evidence-ledger/evidence.jsonl`) mit SHA-256 Hash und Versionierung archiviert.
 4. Der Kontext geht an das konfigurierte AI-Modell (Google Gemini oder freigegebenes Gateway).
-5. Das tägliche Management-Briefing folgt einer festen 7-stufigen Struktur mit strikter Validierung (dringende Aktionen vor kompakter Projektstatusübersicht, keine Dopplungen).
+5. Das tägliche Management-Briefing folgt einer festen 6-stufigen Struktur mit strikter Validierung (dringende Aktionen vor weiteren To-dos, keine Dopplungen zwischen Abschnitten; Doppelungen entfernt `removeDuplicateSectionItems`). Eine Projektstatusübersicht gibt es nicht mehr; Projekte und Fristen kommen ausschließlich aus aktuellen datierten Quellen.
 6. Die UI zeigt Vorschlaege. Seiteneffekte wie E-Mails, Kalendertermine oder Tasks erfordern eine explizite Aktion in der UI oder im Daily-Lauf.
 
 ## Ausfuehrungsmodi

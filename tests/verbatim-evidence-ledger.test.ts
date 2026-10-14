@@ -11,16 +11,16 @@ test('appends verbatim evidence and generates content hash', () => {
     {
       sourceType: 'gmail',
       sourceId: 'msg-1',
-      content: 'Original transcript text for FNTV',
-      author: 'neslim@example.test',
+      content: 'Original transcript text for Projekt',
+      author: 'kontakt@beispiel.example',
       sourceUrl: 'https://mail.google.com/mail/u/0/#all/msg-1',
-      metadata: { subject: 'FNTV Update' },
+      metadata: { subject: 'Projekt Update' },
     },
   ], tmpDir);
 
   assert.equal(records.length, 1);
   assert.equal(records[0].version, 1);
-  assert.equal(records[0].contentHash, hashEvidenceContent('Original transcript text for FNTV'));
+  assert.equal(records[0].contentHash, hashEvidenceContent('Original transcript text for Projekt'));
 
   const ledgerFile = path.join(tmpDir, 'evidence.jsonl');
   assert.equal(fs.existsSync(ledgerFile), true);
@@ -78,28 +78,28 @@ test('searches verbatim evidence with term matching, recency boost and filtering
     {
       sourceType: 'drive',
       sourceId: 'doc-kb',
-      content: 'Koenig & Bauer Budgetfrage intern klären. Gemini 2.5 Flash aktiv.',
+      content: 'Projekt Beta Budgetfrage intern klären. Gemini 2.5 Flash aktiv.',
       sourceTimestamp: new Date().toISOString(),
-      metadata: { name: 'Koenig Bauer Notes' },
+      metadata: { name: 'Projekt Beta Notizen' },
     },
     {
       sourceType: 'gmail',
       sourceId: 'msg-fntv',
-      content: 'Restbudget von 35.5 Stunden bei freenet TV verfügbar.',
+      content: 'Restbudget von 35.5 Stunden bei Beispielkunde verfügbar.',
       sourceTimestamp: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(),
-      metadata: { subject: 'freenet' },
+      metadata: { subject: 'Beispielkunde' },
     },
   ], tmpDir);
 
-  const results = searchVerbatimEvidence({ query: 'Koenig & Bauer Budgetfrage' }, tmpDir);
+  const results = searchVerbatimEvidence({ query: 'Projekt Beta Budgetfrage' }, tmpDir);
   assert.equal(results.length > 0, true);
   assert.equal(results[0].record.sourceId, 'doc-kb');
-  assert.match(results[0].snippet, /Koenig & Bauer/);
+  assert.match(results[0].snippet, /Projekt Beta/);
 
-  const filtered = searchVerbatimEvidence({ query: 'freenet', sourceType: 'drive' }, tmpDir);
+  const filtered = searchVerbatimEvidence({ query: 'Beispielkunde', sourceType: 'drive' }, tmpDir);
   assert.equal(filtered.length, 0);
 
-  const gmailResults = searchVerbatimEvidence({ query: 'freenet', sourceType: 'gmail' }, tmpDir);
+  const gmailResults = searchVerbatimEvidence({ query: 'Beispielkunde', sourceType: 'gmail' }, tmpDir);
   assert.equal(gmailResults.length, 1);
   assert.equal(gmailResults[0].record.sourceId, 'msg-fntv');
 });

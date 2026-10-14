@@ -71,6 +71,64 @@ export function removeCompletedTaskRecommendations(text: string, completedTitles
   return before + section + text.slice(sectionEnd);
 }
 
+/**
+ * Doppelungsverbot: Punkte in Abschnitt 5 und 6, die in Abschnitt 1 oder 2 bereits mit ähnlichem
+ * Titel stehen, werden dort entfernt. Verglichen werden nur Titel der Form `- **Titel**`.
+ */
+export function removeDuplicateSectionItems(text: string): string {
+  const headingRe = /^## (\d)\./gm;
+  const starts: { num: number; index: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = headingRe.exec(text)) !== null) {
+    starts.push({ num: Number(m[1]), index: m.index });
+  }
+  if (starts.length === 0) return text;
+
+  const rangeOf = (num: number): { start: number; end: number } | undefined => {
+    const idx = starts.findIndex(s => s.num === num);
+    if (idx < 0) return undefined;
+    const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
+    return { start: starts[idx].index, end };
+  };
+
+  const earlierTitles: string[] = [];
+  for (const num of [1, 2]) {
+    const range = rangeOf(num);
+    if (!range) continue;
+    for (const match of text.slice(range.start, range.end).matchAll(/^- \*\*([^*\n]+)\*\*/gm)) {
+      earlierTitles.push(match[1]);
+    }
+  }
+  if (earlierTitles.length === 0) return text;
+
+  let result = text;
+  for (const num of [5, 6]) {
+    const current = recomputeRange(result, num);
+    if (!current) continue;
+    const section = result.slice(current.start, current.end);
+    const cleaned = section.replace(
+      /^- \*\*([^*\n]+)\*\*[^\n]*(?:\n(?!- \*\*|---|## |<ACTION_PROPOSALS>)[^\n]*)*\n?/gm,
+      (block, title: string) => earlierTitles.some(e => areTaskTextsSimilar(title, e)) ? '' : block
+    );
+    result = result.slice(0, current.start) + cleaned + result.slice(current.end);
+  }
+  return result;
+}
+
+/** Bereich eines Abschnitts (`## N.`) im aktuellen Text, neu berechnet nach jeder Änderung. */
+function recomputeRange(text: string, num: number): { start: number; end: number } | undefined {
+  const headingRe = /^## (\d)\./gm;
+  const starts: { num: number; index: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = headingRe.exec(text)) !== null) {
+    starts.push({ num: Number(m[1]), index: m.index });
+  }
+  const idx = starts.findIndex(s => s.num === num);
+  if (idx < 0) return undefined;
+  const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
+  return { start: starts[idx].index, end };
+}
+
 export function removeStaleNextStepsFromProjectStatus(text: string, completedTitles: string[]): string {
   if (completedTitles.length === 0) return text;
   const sec2Start = text.search(/^## 2\.\s/m);
@@ -90,46 +148,10 @@ export function removeStaleNextStepsFromProjectStatus(text: string, completedTit
   return text.slice(0, sec2Start) + cleaned + (sec2End >= 0 ? text.slice(sec2End) : '');
 }
 
-export function ensureCriticalProjectTasks(summary: string, sourceContext: string, tasksContext: string, dueDate: string): string {
-  const wireguardTitle = 'HHA: WireGuard-Zugang für Kundeninfrastruktur einrichten';
-  if (!/wireguard/i.test(sourceContext)) {
-    return summary;
-  }
-
-  const taskStates = extractGoogleTaskStates(tasksContext);
-  if (taskStates.open.some(task => areTaskTextsSimilar(wireguardTitle, task) || /wireguard|timo\s+dempwolf/i.test(task) || /public\s+keys?.*hha|hha.*public\s+keys?/i.test(task))) {
-    return summary;
-  }
-
-  const sourceLine = sourceContext.split('\n').find(line => /wireguard/i.test(line)) || 'Aktueller HHA-Kontext nennt persönliche WireGuard-Keys für den Kundeninfrastrukturzugang.';
-  const sourceUrl = sourceLine.match(/https?:\/\/[^\s|)]+/)?.[0] || 'https://tasks.google.com/';
-  const proposal = {
-    id: 'critical-wireguard',
-    type: 'task',
-    title: wireguardTitle,
-    details: {
-      title: wireguardTitle,
-      notes: `Beim Kunden Hamburger Hochbahn persönlichen WireGuard-Key über Timo Dempwolf einrichten lassen, damit der Zugriff auf GitLab/Kundeninfrastruktur für das HHA AI Gateway möglich ist. Quelle: ${sourceUrl}`,
-      dueDate,
-    },
-  };
-  const actionMatch = summary.match(/<ACTION_PROPOSALS>([\s\S]*?)<\/ACTION_PROPOSALS>/i);
-  if (actionMatch) {
-    const raw = actionMatch[1].trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    try {
-      const proposals = JSON.parse(raw);
-      if (Array.isArray(proposals)) {
-        if (proposals.some((proposal: any) => proposal?.type === 'task' && /wireguard|timo\s+dempwolf/i.test(`${proposal.title || ''} ${proposal.details?.title || ''} ${proposal.details?.notes || ''}`))) {
-          return summary;
-        }
-        proposals.push(proposal);
-        return summary.replace(actionMatch[0], `<ACTION_PROPOSALS>\n${JSON.stringify(proposals, null, 2)}\n</ACTION_PROPOSALS>`);
-      }
-    } catch {
-      // Fall through and append a clean proposal block.
-    }
-  }
-  return `${summary.trim()}\n\n<ACTION_PROPOSALS>\n${JSON.stringify([proposal], null, 2)}\n</ACTION_PROPOSALS>`;
+// Kundenspezifische Pflicht-Tasks werden nicht mehr fest verdrahtet.
+// Konkrete Aktionen entstehen dynamisch aus expliziten Nutzer-Bitten und Abschnitten 5/6.
+export function ensureCriticalProjectTasks(summary: string, _sourceContext: string, _tasksContext: string, _dueDate: string): string {
+  return summary;
 }
 
 /** Sucht die nächstliegende Direktlink-URL vor einer Fundstelle im Quellkontext. */
@@ -169,14 +191,12 @@ export function ensureMeetingProtocolTasks(summary: string, sourceContext: strin
     if (!actions.some(action => areTaskTextsSimilar(action.title, label))) actions.push({ title: label, notes });
   }
   for (const match of sourceContext.matchAll(actionPattern)) {
-  const label = match[1].trim().replace(/\s+/g, ' ');
-  const sourceUrl = findNearestSourceUrl(sourceContext, match.index ?? 0);
-  const notes = buildShortTaskNotes(match[2], sourceUrl);
-  if (!label || !notes || /^(?:status|aktueller stand|zusammenfassung)$/i.test(label)) continue;
-  if (/coaching|mentoring\s*j|schwingdings/i.test(label) || /coaching|mentoring\s*j|schwingdings/i.test(notes)) continue;
-    const title = /jost/i.test(`${label} ${notes}`) && /angebot|status/i.test(`${label} ${notes}`)
-      ? 'HHA: Jost nach dem Status des Angebots fragen'
-      : label;
+    const label = match[1].trim().replace(/\s+/g, ' ');
+    const sourceUrl = findNearestSourceUrl(sourceContext, match.index ?? 0);
+    const notes = buildShortTaskNotes(match[2], sourceUrl);
+    if (!label || !notes || /^(?:status|aktueller stand|zusammenfassung)$/i.test(label)) continue;
+    if (/coaching|mentoring\s*j|schwingdings/i.test(label) || /coaching|mentoring\s*j|schwingdings/i.test(notes)) continue;
+    const title = label;
     if (!actions.some(action => areTaskTextsSimilar(action.title, title))) actions.push({ title, notes });
   }
   if (actions.length === 0) return summary;

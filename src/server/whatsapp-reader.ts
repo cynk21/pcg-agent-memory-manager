@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { createHash } from 'crypto';
 
@@ -6,6 +7,50 @@ type RecordEvidence = (inputs: any[]) => void;
 
 const AUTH_DIR = path.join(process.cwd(), '.wwebjs_auth');
 const SESSION_DIR = path.join(process.cwd(), 'session');
+
+/**
+ * Kopiert die vorhandene WhatsApp-Verknüpfung in einen frischen Lauf-Ordner.
+ * Das Originalprofil wird nie direkt von einem Browser geöffnet, daher kann es nicht gesperrt werden.
+ */
+export function copyWhatsAppAuth(runDir: string): string | undefined {
+  // Der Reader nutzt LocalAuth ohne clientId: die Sitzung liegt unter <dataPath>/session.
+  // Quelle ist daher das bestehende session/-Verzeichnis, Ziel der gleichnamige Ordner im Lauf-Ordner.
+  if (!fs.existsSync(SESSION_DIR)) return undefined;
+  const skipped: string[] = [];
+  try {
+    fs.cpSync(SESSION_DIR, path.join(runDir, 'session'), {
+      recursive: true,
+      filter: (src) => {
+        if (/Singleton(Lock|Socket|Cookie)$/.test(src)) return false;
+        // Gesperrte Dateien (z. B. Cookies, von einem laufenden Chrome gehalten) überspringen, nicht den Abruf abbrechen.
+        try {
+          if (fs.statSync(src).isFile()) fs.accessSync(src, fs.constants.R_OK);
+          const fd = fs.openSync(src, 'r');
+          fs.closeSync(fd);
+        } catch {
+          skipped.push(src);
+          return false;
+        }
+        return true;
+      },
+    });
+    if (skipped.length > 0) {
+      console.warn(`[WhatsApp] ${skipped.length} gesperrte Profil-Datei(en) übersprungen: ${skipped.slice(0, 3).join(', ')}`);
+    }
+    return undefined;
+  } catch (err: any) {
+    return `(WhatsApp-Profil konnte nicht kopiert werden: ${err?.message || err}. Bitte erneut versuchen.)\n`;
+  }
+}
+
+/** Entfernt den Lauf-Ordner nach dem Abruf (Browser muss vorher beendet sein). */
+export function cleanupWhatsAppRunDir(runDir: string): void {
+  try {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  } catch {
+    // Temp-Ordner darf bleiben; das OS räumt ihn auf.
+  }
+}
 
 // Limits für WhatsApp-Nachrichten
 const MAX_CHATS = 50;
@@ -82,6 +127,33 @@ function getChromeExecutablePath(): string | undefined {
 }
 
 /**
+ * Prüft, ob ein Chrome-Profil im Session-/Auth-Verzeichnis noch gesperrt ist.
+ * Entfernt eine verwaiste Sperre nur, wenn sie nicht mehr gehalten wird (kein Browser-Lock-Ziel existiert).
+ * Gibt eine Meldung zurück, wenn das Profil belegt bleibt; sonst undefined.
+ */
+export function checkWhatsAppProfileLock(dirs: string[] = [AUTH_DIR, SESSION_DIR]): string | undefined {
+  const lockNames = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+  const held: string[] = [];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of lockNames) {
+      const lockPath = path.join(dir, name);
+      if (!fs.existsSync(lockPath)) continue;
+      try {
+        // Ein von einem laufenden Chrome gehaltenes Lock lässt sich nicht löschen; ein verwaistes schon.
+        fs.unlinkSync(lockPath);
+      } catch {
+        held.push(lockPath);
+      }
+    }
+  }
+  if (held.length > 0) {
+    return `(WhatsApp-Profil ist gesperrt: ${held.join(', ')}. Ein anderer Chrome-/WhatsApp-Prozess hält das Profil. Bitte Chrome-Prozess mit diesem Profil beenden und erneut versuchen.)\n`;
+  }
+  return undefined;
+}
+
+/**
  * Liest alle AKTIVEN WhatsApp-Chats des verknüpften Accounts rein lesend aus.
  * Es werden alle Nachrichten der letzten `daysBack` Tage (z. B. 2 bis 7 Tage) übernommen.
  */
@@ -91,6 +163,11 @@ export async function fetchWhatsAppMessages(
 ): Promise<string> {
   if (!isWhatsAppConfigured()) {
     return '(WhatsApp nicht angemeldet: Bitte führe "npm run agent -- whatsapp-auth" aus)\n';
+  }
+
+  const lockMessage = checkWhatsAppProfileLock();
+  if (lockMessage) {
+    return lockMessage;
   }
 
   let wwebjs: any;
@@ -103,8 +180,17 @@ export async function fetchWhatsAppMessages(
   const { Client, LocalAuth } = wwebjs.default || wwebjs;
   const chromePath = getChromeExecutablePath();
 
+  // Robust: Jeder Abruf nutzt eine frische Profil-Kopie in einem eigenen Temp-Ordner.
+  // So kann ein hängender oder fremder Browser das eigentliche Profil nie mehr sperren.
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcg-wa-'));
+  const copyError = copyWhatsAppAuth(runDir);
+  if (copyError) {
+    cleanupWhatsAppRunDir(runDir);
+    return copyError;
+  }
+
   const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: process.cwd() }),
+    authStrategy: new LocalAuth({ dataPath: runDir }),
     puppeteer: {
       headless: true,
       executablePath: chromePath,
@@ -123,6 +209,7 @@ export async function fetchWhatsAppMessages(
       isResolved = true;
       clearTimeout(timeout);
       try { await client.destroy(); } catch {}
+      cleanupWhatsAppRunDir(runDir);
       resolve(result);
     };
 

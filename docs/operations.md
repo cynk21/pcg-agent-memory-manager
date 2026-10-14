@@ -35,7 +35,23 @@ Der erste Befehl oeffnet einmalig einen Browser. Danach arbeitet die CLI mit dem
 npm run agent -- daily
 ```
 
-Der Lauf sammelt Workspace-Kontext, speichert Rohquellen unverändert im Evidence Ledger, erstellt ein 7-teiliges Management-Briefing (Änderungen, Ortsbeirat & Kommunales, Meetings, Ausblick, dringende Klärungen, weitere nächste Schritte, kompakte Projektstatusübersicht), synchronisiert es nach Drive, sendet eine Zusammenfassung per E-Mail und postet das Briefing in den Google-Chat-Raum.
+Der Lauf sammelt Workspace-Kontext (Drive, Gmail inklusive gesendeter Mails, Kalender, Google Chat, Telegram, WhatsApp, Google Tasks), speichert Rohquellen unverändert im Evidence Ledger, erstellt ein 6-teiliges Management-Briefing (Änderungen, Ortsbeirat & Kommunales, Meetings & Vorbereitung, Ausblick, dringende Klärungen, weitere nächste Schritte), synchronisiert es nach Drive, sendet eine Zusammenfassung per E-Mail und postet das Briefing in den Google-Chat-Raum.
+
+Die Briefing-Inhalte werden ausschließlich aus aktuellen datierten Quellen abgeleitet. Projekte, Kunden, Personen und Fristen stehen nicht fest im Code oder Prompt. Erledigte Google Tasks werden nicht wieder aufgenommen, und eine gesendete Mail, auf die im Thread bereits geantwortet wurde, erzeugt keinen Nachhak-Task. Aktionsvorschläge erscheinen nur im Chat, nicht im Report.
+
+### Erledigte Aufgaben schließen
+
+```bash
+npm run agent -- task-done "Exakter Titel des offenen Tasks"
+```
+
+Der Befehl schließt genau einen offenen Google Task mit exakt diesem Titel. Gibt es keinen oder mehrere Treffer, bricht er ab und ändert nichts.
+
+### WhatsApp-Quelle
+
+Der Abruf kopiert die bestehende WhatsApp-Sitzung (`session/`) vor jedem Lauf in einen frischen Temp-Ordner und arbeitet nicht direkt im Projektprofil. Gesperrte Profil-Dateien (z. B. `Network/Cookies`, wenn ein Chrome-Prozess sie hält) werden beim Kopieren übersprungen und im Log vermerkt; der Abruf läuft trotzdem durch. Ein manuelles Beenden von Chrome-Prozessen ist dafür nicht nötig.
+
+Scheitert der Abruf dennoch vollständig (z. B. Initialisierungsfehler), erscheint im Briefing ein Warnblock „WHATSAPP-QUELLE AUSGEFALLEN“ mit der Ursache. Eine fehlende Anmeldung behebt `npm run agent -- whatsapp-auth`.
 
 Vor der Analyse synchronisiert der Lauf die strukturierten OKF-Dateien aus dem lokalen `agent-memory/`-Ordner (inklusive Unterordner) in den konfigurierten Drive-Memory-Ordner. Diese Dateien bleiben die autoritative lokale Quelle; Token- und Geheimdateien werden nicht synchronisiert.
 
