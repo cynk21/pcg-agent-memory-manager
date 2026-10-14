@@ -22,7 +22,10 @@ import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, nor
 import { recordVerbatimEvidence } from './src/server/evidence.ts';
 import { validateTextField } from './src/server/input-validation.ts';
 import { buildEvidencePacket } from './src/server/evidence-packet.ts';
-import { callRemoteMcpTool, fetchAtlassianJiraStatusContext, fetchOdooProjectStatusContext, getConfiguredRemoteMcpServerAsync } from './src/server/remote-mcp.ts';
+import { callRemoteMcpTool, getConfiguredRemoteMcpServerAsync } from './src/server/remote-mcp.ts';
+import { normalizeTaskComparisonText, areTaskTextsSimilar, extractGoogleTaskStates, removeCompletedTaskRecommendations, removeStaleNextStepsFromProjectStatus, removeDuplicateSectionItems, ensureCriticalProjectTasks, findNearestSourceUrl, buildShortTaskNotes, ensureMeetingProtocolTasks, ensureActionSectionTasks } from './src/server/action-reconciliation.ts';
+import { getGenAIClient, callOpenAICompatibleGateway, generateGeminiContentWithTimeout } from './src/server/llm-gateway.ts';
+export { normalizeTaskComparisonText, areTaskTextsSimilar, extractGoogleTaskStates, removeCompletedTaskRecommendations, removeStaleNextStepsFromProjectStatus, removeDuplicateSectionItems, ensureCriticalProjectTasks, findNearestSourceUrl, buildShortTaskNotes };
 
 export { fetchTasks };
 
@@ -1113,13 +1116,13 @@ function extractCurrentSquadSignals(driveContext: string, chatsContext: string):
   const currentDrive = driveContext.split('\n--- LOKALES MEMORY / HINTERGRUND')[0];
   const driveBlocks = currentDrive.match(/--- DOKUMENT \/ TRANSKRIPT[\s\S]*?(?=\n--- DOKUMENT \/ TRANSKRIPT|$)/g) || [];
   const currentSourceBlocks = driveBlocks.filter(block => !/(?:^|\s)(?:projects|customers|squad|general)\/[^\s"|]+\.md/i.test(block));
-  const relevantBlocks = currentSourceBlocks.filter(block => /panda|mario|auslastung|kapazität|neue[nr]?\s+projekte|staffing|resource planner|billability|allocation/i.test(block));
-  const chatLines = chatsContext.split(/\r?\n/).filter(line => /panda|mario|auslastung|kapazität|neue[nr]?\s+projekte|staffing|resource planner|billability|allocation/i.test(line));
+  const relevantBlocks = currentSourceBlocks.filter(block => /auslastung|kapazität|neue[nr]?\s+projekte|staffing|resource planner|billability|allocation/i.test(block));
+  const chatLines = chatsContext.split(/\r?\n/).filter(line => /auslastung|kapazität|neue[nr]?\s+projekte|staffing|resource planner|billability|allocation/i.test(line));
   const signals = [
     ...relevantBlocks.slice(0, 3).map(block => block.slice(0, 1600)),
     chatLines.slice(0, 25).join('\n'),
   ].filter(Boolean).join('\n\n');
-  return signals || '(Keine aktuelle datierte Squad-Auslastungsquelle für Panda oder Mario gefunden.)';
+  return signals || '(Keine aktuelle datierte Squad-Auslastungsquelle gefunden.)';
 }
 
 export function extractProjectCapacityEvidence(driveContext: string, emailsContext: string, chatsContext: string): string {
@@ -1173,9 +1176,7 @@ function titleFromMemoryPath(value: string): string {
     .replace(/\.md$/i, '')
     .split(/[-_/]+/)
     .map(part => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part)
-    .join(' ')
-    .replace(/\bVoestalpine\b/i, 'VOEST Alpine')
-    .replace(/\bKoenig Und Bauer\b/i, 'Koenig & Bauer');
+    .join(' ');
 }
 
 export function validateDailyBriefingStructure(text: string): string {
@@ -1186,7 +1187,6 @@ export function validateDailyBriefingStructure(text: string): string {
     '## 4. 🔮 Vorausschau & Wochenausblick',
     '## 5. 🚨 Dringende Klärungen & Projekt-To-dos',
     '## 6. 💡 Weitere nächste Schritte',
-    '## 7. 📋 Kompakte Projektstatusübersicht',
   ];
   const missing = expectedSections.filter(section => !text.includes(section));
   if (missing.length > 0) {
@@ -1199,47 +1199,6 @@ export function validateDailyBriefingStructure(text: string): string {
     ? `${text.slice(0, titleEnd + 1)}\n${text.slice(firstSectionIndex)}`
     : text;
 
-  const statusSectionStart = normalized.indexOf('## 7. 📋 Kompakte Projektstatusübersicht');
-  const statusSectionEnd = normalized.indexOf('\n<ACTION_PROPOSALS>', statusSectionStart);
-  if (statusSectionStart >= 0) {
-    const end = statusSectionEnd >= 0 ? statusSectionEnd : normalized.length;
-    const section = normalized.slice(statusSectionStart, end);
-    const lines = section.split('\n');
-    const repaired: string[] = [];
-    let currentItem = false;
-    let itemHasStatus = false;
-    let skipOrphanBlock = false;
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index];
-      if (skipOrphanBlock) {
-        if (/^-\s+\*\*/.test(line) || /^---/.test(line)) {
-          skipOrphanBlock = false;
-        } else {
-          continue;
-        }
-      }
-      if (/^-\s+\*\*/.test(line)) {
-        currentItem = true;
-        itemHasStatus = false;
-      }
-      if (!line.trim() && itemHasStatus) currentItem = false;
-      if (/^\s*[•-]\s+\*\*Status:\*\*/.test(line) && !currentItem) {
-        const remaining = lines.slice(index).join('\n');
-        const sourcePath = remaining.match(/(?:projects|customers)\/([a-z0-9-]+)\.md/i)?.[1];
-        if (sourcePath) {
-          repaired.push(`- **${titleFromMemoryPath(sourcePath)}**`);
-          currentItem = true;
-        } else {
-          console.warn('[Briefing Structure] Verwaister Projektstatus ohne ermittelbaren Projekttitel.');
-          skipOrphanBlock = true;
-          continue;
-        }
-      }
-      if (/^\s*[•-]\s+\*\*Status:\*\*/.test(line)) itemHasStatus = true;
-      repaired.push(line);
-    }
-    normalized = `${normalized.slice(0, statusSectionStart)}${repaired.join('\n')}${normalized.slice(end)}`;
-  }
   return normalized;
 }
 
@@ -1248,14 +1207,6 @@ export function validateDailyBriefingStructure(text: string): string {
 function applyCanonicalSpellingCorrections(text: string): string {
   if (!text) return "";
   let corrected = text;
-  corrected = corrected.replace(/\bDom\s*Kura\b/gi, 'domcura');
-  corrected = corrected.replace(/\bDomKura\b/g, 'domcura');
-  corrected = corrected.replace(/\bFirst\s*Alpina\b/gi, 'VOEST Alpine');
-  corrected = corrected.replace(/\bFirst\s*Alpine\b/gi, 'VOEST Alpine');
-  corrected = corrected.replace(
-    /-\s+\*\*Kantonsspital\s+Graub[üu]nden\*\*\s*(\r?\n\s*[•-]\s+\*\*Status:\*\*[\s\S]*?(?:Avantgarde|Patrik M[öo]ller))/gi,
-    '- **Avantgarde**$1'
-  );
   return corrected;
 }
 
@@ -1349,10 +1300,7 @@ function removeStaleNextStepsFromProjectStatus(text: string, completedTitles: st
 }
 
 function applyAuthoritativeProjectCorrections(text: string): string {
-  return text.replace(
-    /(^|\n)(- \*\*SUSE\*\*[\s\S]*?)(?=\n- \*\*|\n---|$)/gi,
-    (_match, prefix, block) => prefix + block.replace(/^\s*•?\s*\*\*Nächste Schritte:\*\*[^\n]*Kickoff[^\n]*\n?/gim, '')
-  );
+  return text;
 }
 
 export function sanitizeActionProposals(text: string, tasksContext?: string, eventsContext?: string): string {
@@ -1361,6 +1309,7 @@ export function sanitizeActionProposals(text: string, tasksContext?: string, eve
   text = applyAuthoritativeProjectCorrections(text);
   const taskStates = extractGoogleTaskStates(tasksContext);
   text = removeStaleNextStepsFromProjectStatus(text, taskStates.completed);
+  text = removeDuplicateSectionItems(text);
   if (!text.includes('<ACTION_PROPOSALS>')) {
     text = removeCompletedTaskRecommendations(text, taskStates.completed, taskStates.open);
     text = convertMarkdownTablesToCleanText(text);
@@ -1418,8 +1367,8 @@ export function sanitizeActionProposals(text: string, tasksContext?: string, eve
         }
 
         // 3. INTELLIGENT CALENDAR CROSS-REFERENCING:
-        // If there is already a meeting today with a person (e.g. Marion) or customer,
-        // do not propose a redundant task or email like "Kümmere dich um Marion bzgl. Auslastung" or "E-Mail an Marion".
+        // If there is already a meeting today with a person or customer,
+        // do not propose a redundant task or email for a topic already on the agenda.
         const isMeetingRedundant = todayMeetingKeywords.some(keyword => {
           if (keyword.length < 3) return false;
           const matchesKeyword = titleLower.includes(keyword) || notesLower.includes(keyword);
@@ -1637,103 +1586,6 @@ export function ensureActionSectionTasks(summary: string, tasksContext: string, 
   return actionMatch ? summary.replace(actionMatch[0], serialized) : `${summary.trim()}\n\n${serialized}`;
 }
 
-function ensureMcpSourceMentions(summary: string, odooContext: string, jiraContext: string): string {
-  const mentions: string[] = [];
-  const odooProjectLines = odooContext.split('\n').filter(line => line.startsWith('- Odoo-Projekt-ID ')).slice(0, 15);
-  const hardyMainProjectLines = odooContext.split('\n').filter(line => line.startsWith('- Hardy-Hauptprojekt | '));
-  const hardyMainTaskLines = odooContext.split('\n').filter(line => line.startsWith('- Hardy-Hauptprojekt-Task | '));
-  const jiraIssueLines = jiraContext.split('\n').filter(line => line.startsWith('- Jira ')).slice(0, 20);
-  if (/Odoo-Projekt- und Zeiterfassungskontext/.test(odooContext) && !/\[Quelle: Odoo MCP/.test(summary)) {
-    mentions.push('- **Odoo-Abgleich:** Aktuelle Odoo-Projekt-, Task- und Zeiterfassungsdaten wurden read-only verarbeitet. [Quelle: Odoo MCP](https://odoo-mcp.gateway.pcg.io/mcp/)');
-  }
-  if (/Jira-Projektstatus/.test(jiraContext) && !/\[Quelle: Atlassian MCP/.test(summary)) {
-    mentions.push('- **Jira-Abgleich:** Aktuelle Jira-Issues und Statusdaten wurden read-only verarbeitet. [Quelle: Atlassian MCP](https://mcp.atlassian.com/v1/mcp/authv2)');
-  }
-  const needsHardyMainOverview = hardyMainProjectLines.length > 0 && !summary.includes('Hardys Hauptprojekte in Odoo');
-  if (mentions.length === 0 && !needsHardyMainOverview) return summary;
-  const statusHeader = '\n## 7. 📋 Kompakte Projektstatusübersicht';
-  if (!summary.includes(statusHeader)) return `${summary}\n${mentions.join('\n')}`;
-  const odooOverview = odooProjectLines.length > 0
-    ? `\n### Odoo-Projektabgleich\n${odooProjectLines.join('\n')}\n[Quelle: Odoo MCP](https://odoo-mcp.gateway.pcg.io/mcp/)\n`
-    : '';
-  const hardyMainOverview = hardyMainProjectLines.length > 0
-    ? `\n### Hardys Hauptprojekte in Odoo\n${hardyMainProjectLines.join('\n')}\n\n#### Zugehörige Odoo-Tasks\n${hardyMainTaskLines.join('\n') || '(Keine aktiven Tasks gefunden.)'}\n[Quelle: Odoo MCP](https://odoo-mcp.gateway.pcg.io/mcp/)\n`
-    : '';
-  const jiraOverview = jiraIssueLines.length > 0
-    ? `\n### Jira-Projektabgleich\n${jiraIssueLines.join('\n')}\n[Quelle: Atlassian MCP](https://mcp.atlassian.com/v1/mcp/authv2)\n`
-    : '';
-  return summary.replace(statusHeader, `\n${mentions.join('\n')}\n${statusHeader}${hardyMainOverview}${odooOverview}${jiraOverview}`);
-}
-
-async function publishDailyStatusToConfluence(summary: string, dateStr: string, odooContext: string): Promise<void> {
-  try {
-    const config = await getConfiguredRemoteMcpServerAsync('atlassian');
-    const findPage = async (title: string, parentId: string) => {
-      const search = await callRemoteMcpTool(config, 'searchConfluenceUsingCql', { cloudId: CONFLUENCE_MEMORY_CLOUD_ID, cql: `ancestor = "${parentId}" AND title ~ "${title}"`, limit: 20 });
-      const text = search.content?.find((item: any) => item.type === 'text')?.text || '';
-      const data = JSON.parse(text || '{}');
-      if (!Array.isArray(data.results)) return null;
-      const result = data.results.find((item: any) => String((item.content || item).title || '').toLowerCase().startsWith(title.toLowerCase())) || data.results.find((item: any) => (item.content || item).id);
-      return result?.content || result || null;
-    };
-    const ensurePage = async (title: string, parentId: string, body: string) => {
-      const existing = await findPage(title, parentId);
-      if (existing?.id) {
-        await callRemoteMcpTool(config, 'updateConfluencePage', {
-          cloudId: CONFLUENCE_MEMORY_CLOUD_ID,
-          pageId: String(existing.id),
-          title,
-          contentFormat: 'markdown',
-          body,
-        });
-        return String(existing.id);
-      }
-      const created = await callRemoteMcpTool(config, 'createConfluencePage', { cloudId: CONFLUENCE_MEMORY_CLOUD_ID, spaceId: CONFLUENCE_MEMORY_SPACE_ID, parentId, title, contentFormat: 'markdown', body });
-      const text = created.content?.find((item: any) => item.type === 'text')?.text || '';
-      return String(JSON.parse(text || '{}').id || '');
-    };
-    const memoryRootId = await ensurePage('PCG Agent Memory', CONFLUENCE_MEMORY_PARENT_ID, '# PCG Agent Memory\n\nAutomatisch gepflegte Projekt-, Squad- und Prozessübersichten des PCG Agent Memory Managers.');
-    if (!memoryRootId) throw new Error('Confluence-Root für PCG Agent Memory konnte nicht angelegt werden.');
-    const dailyRootId = await ensurePage('Daily Project Status', memoryRootId, '# Daily Project Status\n\nAutomatisch gepflegte Tagesseiten für Projektstatus, Reststunden, Prognosen und Quellen.');
-    if (!dailyRootId) throw new Error('Confluence-Parent für Daily Project Status konnte nicht angelegt werden.');
-    const datePageId = await ensurePage(dateStr, dailyRootId, `# Daily Project Status ${dateStr}\n\n${cleanContentForEmail(summary)}`);
-    if (!datePageId) throw new Error(`Confluence-Tagesseite ${dateStr} konnte nicht angelegt werden.`);
-    const blocks = summary.match(/^- \*\*[\s\S]*?(?=^- \*\*|^## |$)/gm) || [];
-    const odooProjects = odooContext.split('\n').filter(line => line.startsWith('- Odoo-Projekt-ID '));
-    const bookedOdooTasks = odooContext.split('\n').filter(line => line.startsWith('- Odoo-Task-ID ') && line.includes('Exaktes Odoo-Projekt:'));
-    const projectDir = path.join(process.cwd(), 'agent-memory', 'projects');
-    if (fs.existsSync(projectDir)) {
-      for (const fileName of fs.readdirSync(projectDir).filter(name => name.endsWith('.md'))) {
-        const memory = fs.readFileSync(path.join(projectDir, fileName), 'utf8');
-        const title = memory.match(/^title:\s*(.+)$/m)?.[1]?.trim() || fileName.replace(/\.md$/, '');
-        const projectIds = [...memory.matchAll(/Odoo(?:\s|-)?Projekt(?:\s|-)?ID\s*[:`]?\s*(\d+)/gi)].map(match => match[1]);
-        const projectTitleKey = title.split('(')[0].trim().toLowerCase();
-        const matchingOdooProjects = odooProjects.filter(line => projectIds.some(id => line.includes(`Odoo-Projekt-ID ${id} `)) || (projectTitleKey.length >= 5 && line.toLowerCase().includes(projectTitleKey)));
-        const exactOdooNames = matchingOdooProjects.flatMap(line => [...line.matchAll(/\| Projekt:\s*([^|]+)/gi)].map(match => match[1].trim()));
-        const matchingDailyBlocks = blocks.filter(block => {
-          const lowerBlock = block.toLowerCase();
-          return matchingOdooProjects.some(project => {
-            const id = project.match(/^- Odoo-Projekt-ID\s+(\d+)/)?.[1];
-            return Boolean(id && lowerBlock.includes(`odoo projekt-id ${id}`)) || exactOdooNames.some(name => lowerBlock.includes(name.toLowerCase()));
-          }) || (projectTitleKey.length >= 5 && lowerBlock.includes(projectTitleKey));
-        });
-        const matchingTasks = bookedOdooTasks.filter(line => matchingOdooProjects.some(project => {
-          const id = project.match(/^- Odoo-Projekt-ID\s+(\d+)/)?.[1];
-          return Boolean(id && line.includes(`(ID ${id})`));
-        }));
-        const odooSection = matchingOdooProjects.length > 0
-          ? `## Odoo-Abgleich\n${matchingOdooProjects.join('\n')}\n\n### Tatsächlich bebuchte Tasks\n${matchingTasks.join('\n') || 'Keine bebuchten Tasks mit task_id im aktuellen Monat.'}\n[Quelle: Odoo MCP](https://odoo-mcp.gateway.pcg.io/mcp/)`
-          : '## Odoo-Abgleich\nKein eindeutiger Odoo-Projektabgleich für diesen Memory-Eintrag gefunden; keine Projektdaten ableiten.';
-        const body = `${memory}\n\n${odooSection}\n\n## Daily-Auszug ${dateStr}\n\n${matchingDailyBlocks.join('\n\n') || 'Für dieses Projekt wurde im aktuellen Daily kein eigener Statusblock erzeugt.'}`;
-        await ensurePage(title, datePageId, body);
-      }
-    }
-    console.log(`[Confluence] Daily-Hierarchie aktualisiert: Daily Project Status/${dateStr}`);
-  } catch (error: any) {
-    console.warn('[Confluence] Daily-Seite konnte nicht angelegt werden:', error?.message || error);
-  }
-}
-
 function convertMarkdownTablesToCleanText(text: string): string {
   if (!text) return "";
   const lines = text.split(/\r?\n/);
@@ -1837,8 +1689,8 @@ MANDATORISCHE VORHERIGE AKTUALITÄTS- & RELEVANZ-PRÜFUNG:
 
 STRIKTER QUERABGLEICH MIT KALENDER & MEETINGS (KONTEXTVERSTÄNDNIS FÜR DAS "DOING"):
 1. VOR JEDEM AKTIONEN- ODER TO-DO-VORSCHLAG: Prüfe immer den Kalender ("--- KALENDER ---")!
-2. Wenn für HEUTE (oder die nächsten Tage) bereits ein Meeting, 1:1, Sync oder Gespräch mit einer Person (z. B. Marion, Squad-Mitglieder, Kunden) im Kalender steht:
-   - SCHLAGE HIERFÜR KEIN SEPARATES TO-DO / KEINE MANUELLE DOING-AUFGABE VOR (wie z. B. "Kümmere dich um Marion bzgl. Auslastung", "E-Mail an Marion wegen Staffing", "Status nachhaken", "Marion kontaktieren")!
+2. Wenn für HEUTE (oder die nächsten Tage) bereits ein Meeting, 1:1, Sync oder Gespräch mit einer Person oder einem Kunden im Kalender steht:
+   - SCHLAGE HIERFÜR KEIN SEPARATES TO-DO / KEINE MANUELLE DOING-AUFGABE VOR (z. B. Nachfassen, Kontaktieren oder Abstimmen zu einem Thema, das im Termin besprochen wird)!
    - Hardy bespricht solche Themen (Auslastung, Feedback, Projektstand, Roadmap) direkt im anstehenden Termin.
    - Nenne das Thema stattdessen als **Agenda-Punkt / Notiz zur Meeting-Vorbereitung** im Text des Briefings – erstelle KEIN separates Doing/Action Proposal dafür!
 3. Erstelle nur dann ein Action Proposal / To-Do, wenn ein echtes asynchrones To-Do vorliegt, das NICHT Gegenstand eines heute anstehenden Meetings ist.
@@ -1847,18 +1699,13 @@ STRIKTE REGEL FÜR ABGESCHLOSSENE AUFGABEN & ADMINISTRATIVE MITTEILUNGEN:
 1. Aufgaben unter [ERLEDIGT] und im lokalen Memory explizit abgeschlossene Punkte:
    - Schlage dieselbe Aufgabe KEINESFALLS erneut als To-do, Action Proposal oder Nachfass-Aufgabe vor.
    - Ein Projekt darf trotzdem einen neuen Status haben; schliesse nicht pauschal alle zukünftigen Aufgaben eines Projekts aus.
-2. HiBob / Stundenzettel-Freigaben (z. B. Stundenzettel von Nils Traut):
+2. HiBob / Stundenzettel-Freigaben (z. B. Stundenzettel einer Person aus der Quelle):
    - Sind administrative E-Mail-Mitteilungen bzw. längst erledigt. NIEMALS als offene To-Dos oder Freigabeaufgaben vorschlagen!
-3. Panda und Mario Auslastung:
+3. Auslastung von Teammitgliedern:
    - Verwende niemals eine statische Auslastungsannahme. Prüfe die neueste datierte Weekly-, Transkript-, Chat- oder Planner-Quelle.
-   - Wenn Panda nach neuen Projekten fragt oder Mario für neue Aufgaben / andere Auslastung vorgeschlagen wird, nimm dies als aktuelles Squad-Planungssignal auf und verlinke die Quelle.
-4. Lorenz / Funding:
-   - Lorenz Funding wird NICHT genutzt (keine Screenshots, Anträge etc. erstellen, nicht Hardys Aufgabe) – stattdessen werden lediglich intern ein paar Stunden umgebucht.
-5. Koenig & Bauer (Koenig&Bauer):
-   - Aus dem PK vom Montag: Interne Treffen finden statt, um die Budgetfrage zu klären. Immer transparent im Projektstatus erwähnen!
-6. Schreibweisen:
-   - "domcura" (immer kleingeschrieben bzw. "domcura", niemals "Dom Kura" oder "DomKura").
-   - "VOEST Alpine" (immer "VOEST Alpine", niemals "First Alpina" oder "First Alpine").
+   - Wenn Teammitglieder nach neuen Projekten fragen oder für andere Aufgaben vorgeschlagen werden, nimm dies als aktuelles Squad-Planungssignal auf und verlinke die Quelle.
+4. Funding-Themen: Nur was aktuelle Quellen belegen; keine Annahmen über Nutzung oder Nicht-Nutzung von Förderinstrumenten.
+5. Projektnamen und Schreibweisen ausschließlich aus aktuellen datierten Quellen übernehmen.
 
 TEAM, ONBOARDING & EINARBEITUNGSPLÄNE (ZUKÜNFTIGE MEILENSTEINE WIE SEPTEMBER):
 1. Einarbeitungspläne, Onboarding-Konzepte, Schulungspläne und Meilensteine für neue Mitarbeiter (insbesondere für September oder anstehende Monate) sind zentrale Kern-Verantwortungen von Hardy als Squad Lead!
@@ -1873,7 +1720,7 @@ TEAM, ONBOARDING & EINARBEITUNGSPLÄNE (ZUKÜNFTIGE MEILENSTEINE WIE SEPTEMBER):
 
 STRIKTE REGEL FÜR QUELLENANGABEN & ANKLICKBARE LINKS:
 1. Jede wichtige Information, Aussage, jedes Projekt-Update und jedes To-Do MUSS am Ende mit einer konkreten, ANKLICKBAREN Quellenangabe als Markdown-Link belegt werden (nutze stets die im Kontext angegebenen "Direktlink:" URLs)!
-   - Beispiele: \`[Quelle: Google Drive – "Transkript PK Montag"](URL)\`, \`[Quelle: Google Chat – Raum "DATA Squad"](URL)\`, \`[Quelle: Gmail – Betreff "...", Datum ...](URL)\`, \`[Quelle: Google Kalender – Termin ...](URL)\`, \`[Quelle: Google Tasks – Liste "..."](URL)\`.
+   - Beispiele: \`[Quelle: Google Drive – "<Dokumentname>"](URL)\`, \`[Quelle: Google Chat – "<Raumname>"](URL)\`, \`[Quelle: Gmail – Betreff "...", <Datum>](URL)\`, \`[Quelle: Google Kalender – "<Termin>"](URL)\`, \`[Quelle: Google Tasks – Liste "<Liste>"](URL)\`.
 2. Erfinde niemals Quellen oder Fakten. Wenn eine Information nicht vorhanden ist, weise transparent darauf hin.
 
 STRIKTE REGEL FÜR INTERNE TERMINE (Thursdays for Data):
@@ -1894,7 +1741,7 @@ STRIKTE DATUMS- UND FRISTENREGEL (FEHLERVERMEIDUNG):
 5. Jede neue Task-Aktion MUSS ein konkretes dueDate im Format YYYY-MM-DD enthalten. Wähle bei dringenden Blockern heute, bei normalen Projektaktionen den nächsten sinnvollen Arbeitstag und bei länger laufenden Themen das realistische Abschlussdatum.
 
 KUNDEN-MEETINGS & VORBEREITUNGS-REGEL (SPÄTESTENS 1 TAG VORHER):
-1. Die Vorbereitung auf alle Kunden-, Use-Case- und Partner-Meetings (wie Schwarz / DSV, Kunden-Workshops, Reviews etc.) MUSS SPÄTESTENS 1 TAG VORHER (am Vortag bzw. freitags für Montag) erfolgen!
+1. Die Vorbereitung auf alle Kunden-, Use-Case- und Partner-Meetings (Workshops, Reviews, Pitches etc.) MUSS SPÄTESTENS 1 TAG VORHER (am Vortag bzw. freitags für Montag) erfolgen!
 2. Wenn für HEUTE oder MORGEN oder MONTAG ein Kunden-Meeting im Kalender steht:
    - Ziehe alle in Drive vorhandenen Vorbereitungsnotizen, Mitschriften, Ziele und Use Cases heran.
    - Bereite Hardy aktiv darauf vor (Agenda, Use Cases, offene Punkte).
@@ -1907,9 +1754,9 @@ Wann immer aus deinen Analysen, Antworten oder Briefings konkrete Folgeschritte 
   {
     "id": "act-1",
     "type": "task",
-    "title": "Status nachhaken bei Projekt Alpha",
+    "title": "Status nachhaken bei <Projekt aus Quelle>",
     "details": {
-      "title": "Projekt Alpha: Status nachhaken",
+      "title": "<Projekt aus Quelle>: Status nachhaken",
       "notes": "Erinnerung aus Briefing: Nachfassen bezüglich Feedback zur Architektur.",
       "dueDate": "${todayISO}"
     }
@@ -1917,11 +1764,11 @@ Wann immer aus deinen Analysen, Antworten oder Briefings konkrete Folgeschritte 
   {
     "id": "act-2",
     "type": "email",
-    "title": "E-Mail-Entwurf an Kundin Schmidt vorbereiten",
+    "title": "E-Mail-Entwurf an <Empfänger aus Quelle> vorbereiten",
     "details": {
-      "to": "schmidt@kundenfirma.de",
-      "subject": "Status-Update & Nächste Schritte Projekt Alpha",
-      "body": "Hallo Frau Schmidt,\\n\\nich möchte mich kurz zum aktuellen Stand erkundigen...",
+      "to": "<empfaenger@aus-quelle.example>",
+      "subject": "Status-Update & Nächste Schritte <Projekt aus Quelle>",
+      "body": "Hallo <Anrede>,\\n\\nich möchte mich kurz zum aktuellen Stand erkundigen...",
       "isDraft": true
     }
   },
@@ -1930,7 +1777,7 @@ Wann immer aus deinen Analysen, Antworten oder Briefings konkrete Folgeschritte 
     "type": "calendar",
     "title": "Follow-up Meeting eintragen",
     "details": {
-      "summary": "Follow-up Call: Projekt Alpha Sync",
+      "summary": "Follow-up Call: <Thema aus Quelle>",
       "description": "Besprechung der offenen Punkte aus dem Briefing.",
       "startTime": "${todayISO}T10:00:00",
       "endTime": "${todayISO}T10:30:00"
@@ -1941,7 +1788,7 @@ Wann immer aus deinen Analysen, Antworten oder Briefings konkrete Folgeschritte 
     "type": "chat",
     "title": "Google Chat Erinnerung an Squad senden",
     "details": {
-      "text": "Hallo Team, kurzer Reminder zum Status-Update für Projekt Alpha."
+      "text": "Hallo Team, kurzer Reminder zum Status-Update für <Projekt aus Quelle>."
     }
   }
 ]
@@ -1971,6 +1818,72 @@ export async function createGoogleTaskDirect(title: string, notes?: string, dueD
   });
 
   return { id: insertRes.data.id, title, notes, dueDate };
+}
+
+/**
+ * Schließt genau EINEN offenen Google Task mit exakt diesem Titel.
+ * Bricht ab, wenn kein oder mehrere offene Tasks mit diesem Titel existieren (keine Fehlschließung).
+ */
+export async function completeGoogleTaskByTitle(title: string, tokenOverride?: string) {
+  const token = tokenOverride || loadStoredToken();
+  if (!token) {
+    throw new GoogleAuthError("Kein gültiges Google Token vorhanden. Bitte in der Web-App anmelden.");
+  }
+  const oauth2Client = getOAuth2Client(token);
+  const tasksApi = google.tasks({ version: 'v1', auth: oauth2Client });
+  const lists = (await tasksApi.tasklists.list({ maxResults: 100 })).data.items || [];
+
+  const matches: { listId: string; taskId: string; title: string }[] = [];
+  for (const list of lists) {
+    if (!list.id) continue;
+    const res = await tasksApi.tasks.list({ tasklist: list.id, showCompleted: false, showHidden: false, maxResults: 100 });
+    for (const task of res.data.items || []) {
+      if (task.id && task.title === title && task.status !== 'completed') {
+        matches.push({ listId: list.id, taskId: task.id, title: task.title });
+      }
+    }
+  }
+
+  if (matches.length !== 1) {
+    throw new Error(`Erwartet genau 1 offenen Task mit Titel "${title}", gefunden: ${matches.length}. Nichts geändert.`);
+  }
+
+  const target = matches[0];
+  await tasksApi.tasks.patch({
+    tasklist: target.listId,
+    task: target.taskId,
+    requestBody: { status: 'completed', completed: new Date().toISOString() },
+  });
+  return { id: target.taskId, title: target.title };
+}
+
+/**
+ * Legt eine Google Task an. Schlägt der Aufruf fehl (z. B. "Invalid Value" durch
+ * überlange oder fehlerhafte Notizen), wird mit gekürzter, bereinigter Notiz erneut
+ * versucht und zuletzt ohne Notiz/Fälligkeit, damit ein Protokoll-Punkt nie verloren geht.
+ */
+export async function createTaskWithFallback(title: string, notes: string, dueDate: string, tokenOverride?: string) {
+  const cleanTitle = title.replace(/\s+/g, ' ').trim().slice(0, 500);
+  const cleanNotes = notes
+    .replace(/\[Gekürzt bei \d[\d.]* Zeichen\][\s\S]*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const attempts: { notes: string; due: string | undefined }[] = [
+    { notes: cleanNotes.slice(0, 8000), due: dueDate },
+    { notes: cleanNotes.slice(0, 500), due: dueDate },
+    { notes: '', due: undefined },
+  ];
+  let lastError: any;
+  for (const attempt of attempts) {
+    try {
+      return await createGoogleTaskDirect(cleanTitle, attempt.notes, attempt.due, tokenOverride);
+    } catch (err: any) {
+      if (isAuthError(err)) throw err;
+      lastError = err;
+      console.warn(`[Task Fallback] Versuch fehlgeschlagen für "${cleanTitle}": ${err?.message || err}`);
+    }
+  }
+  throw lastError;
 }
 
 app.post('/api/actions/task', async (req, res) => {
@@ -2357,7 +2270,7 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
    - Speichere und strukturiere diesen Kontext persistent mit aussagekräftigen Tags (#kunde/..., #thema/sow, #thema/scoping, #status/wartend, #status/in-progress).
 
 3. 🚨 PROAKTIVE MEETING-VORBEREITUNG (SPÄTESTENS 1 TAG VORHER FÜR KUNDEN & USE CASES):
-   - WICHTIGE REGEL: Die inhaltliche und organisatorische Vorbereitung auf Kunden-, Partner- und Use-Case-Meetings (wie Schwarz / DSV, Workshops, Pitches etc.) MUSS SPÄTESTENS 1 TAG VORHER (am Vortag bzw. freitags für Montag) aktiv im Briefing und Chat bereitgestellt werden!
+   - WICHTIGE REGEL: Die inhaltliche und organisatorische Vorbereitung auf Kunden-, Partner- und Use-Case-Meetings (Workshops, Pitches etc.) MUSS SPÄTESTENS 1 TAG VORHER (am Vortag bzw. freitags für Montag) aktiv im Briefing und Chat bereitgestellt werden!
    - Prüfe alle Kundentermine für HEUTE, MORGEN und den NÄCHSTEN WERKTAG (z. B. Montag).
    - Ziehe ALLE verfügbaren Vorbereitungsnotizen, Mitschriften, Drive-Dokumente und Transkripte (insbesondere gestern/kürzlich eingetragene Vorbereitungen) heran.
    - Bereite Hardy aktiv darauf vor: Was ist die Agenda, welche Use Cases, Ziele, offenen Fragen und technischen Eckpunkte sind relevant?
@@ -2385,29 +2298,24 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
     - BESONDERE DAVID-1:1-AGENDA: Die offene Google-Task "Besprechung David" ist Hardys dauerhafte Agenda-Sammelstelle. Berücksichtige ihren vollständigen Titel und insbesondere die Notiz bei JEDEM Kontextaufbau. Wenn ein David-1:1 ansteht, nimm alle dort gesammelten Themen vollständig als Agenda-/Vorbereitungspunkte auf. Erstelle dafür kein separates To-do, außer eine eigenständige Vorbereitungsaufgabe ist ausdrücklich nötig.
 
 8. 🎯 STRIKTER QUERABGLEICH MIT MEETINGS FÜRS "DOING" (KEINE REDUNDANTEN TO-DOS):
-   - Wenn mit einer Person oder einem Kunden heute oder in Kürze bereits ein Meeting / 1:1 im Kalender steht (wie z. B. heute Meeting mit Marion):
+   - Wenn mit einer Person oder einem Kunden heute oder in Kürze bereits ein Meeting / 1:1 im Kalender steht:
    - Erstelle KEIN separates Doing-To-Do oder E-Mail-Vorschlag, um sich um die Person zu kümmern oder Themen wie Auslastung, Feedback oder Staffing anzusprechen!
    - Nimm solche Themen stattdessen als Agendapunkt / Vorbereitungsnotiz für das Meeting auf.
    - Wenn es sich jedoch um echte Aufgaben aus Transkripten handelt, die Hardy unabhängig vom Meeting erledigen oder vorbereiten muss, erstelle dafür ein konkretes To-Do!
 
 9. 🏷️ HIERARCHISCHE OBSIDIAN-TAGS (#kunde/..., #squad/..., #prio/..., #status/..., #thema/...):
-   - Verwende bei der Strukturierung von Notizen, Themen und Status-Übersichten gezielt hierarchische Obsidian-Tags, z. B. #kunde/schwarz, #kunde/dsv, #squad/mathias, #squad/marion, #status/in-progress, #status/wartend, #prio/hoch, #thema/sow, #thema/ai-ops etc., um Themen schnell auffindbar und filterbar zu machen.
+   - Verwende bei der Strukturierung von Notizen, Themen und Status-Übersichten gezielt hierarchische Obsidian-Tags nach dem Muster #kunde/<name-aus-quelle>, #squad/<name-aus-quelle>, #status/in-progress, #status/wartend, #prio/hoch, #thema/<thema-aus-quelle>. Konkrete Namen ausschließlich aus aktuellen datierten Quellen übernehmen, um Themen schnell auffindbar und filterbar zu machen.
 
 10. 🚫 KEINE MARKDOWN-TABELLEN (STRIKTE ABSATZ- & LISTEN-FORMATIERUNG):
    - Verwende NIEMALS Markdown-Tabellen (weder in Projektstatusberichten noch bei To-Dos oder Zusammenfassungen).
    - Formatiere alle Inhalte stets in gut lesbaren, übersichtlichen Text-Absätzen und Aufzählungspunkten (Bullet Points) mit fetten Titeln.
 
 11. 📌 PROJEKT-SPEZIFISCHE FAKTEN & SCHREIBWEISEN:
-   - **domcura**: Immer kleingeschrieben bzw. "domcura", niemals "Dom Kura" oder "DomKura".
-   - **VOEST Alpine**: Immer "VOEST Alpine" (oder "voestalpine"), niemals "First Alpina" oder "First Alpine".
-   - **Koenig & Bauer (Koenig&Bauer)**: Interne Treffen finden statt, um die Budgetfrage zu klären (beschlossen im PK vom Montag). Im Statusbericht transparent anführen!
-   - **Lorenz Funding**: Lorenz Funding soll NICHT genutzt werden (keine Screenshots, Anträge etc., nicht Hardys Aufgabe) – stattdessen werden intern ein paar Stunden umgebucht.
-    - **Panda / Mario Auslastung**: Keine statischen Aussagen. Aktuellen Status ausschließlich aus der neuesten datierten Quelle ableiten; ältere Aussagen ausdrücklich als überholt behandeln.
-   - **HiBob / Nils Traut**: Administrative Stundenzettel-Freigaben sind bereits erledigt und dürfen keinesfalls als offene Aufgaben vorgeschlagen werden.
+   - **Projekt-Fakten & Schreibweisen:** Projekt- und Kundennamen nur aus aktuellen datierten Quellen übernehmen. Auslastung nur aus der neuesten datierten Quelle ableiten; ältere Aussagen sind überholt. HR-Themen sind keine Projekte.
 
 12. 🔍 OBLIGATORISCHE ANKLICKBARE QUELLENANGABEN (MARKDOWN-LINKS):
    - Jede einzelne Information, jedes Projektupdate, jede Vorbereitungsnotiz und jedes To-Do MUSS am Ende des jeweiligen Punkts mit einer genauen, ANKLICKBAREN Quellenangabe als Markdown-Link belegt werden (nutze die URLs aus "Direktlink:" im Kontext)!
-   - Beispiele: \`[Quelle: Google Drive – "Transkript PK Montag"](https://...)\`, \`[Quelle: Google Chat – "Raum DATA Squad"](https://...)\`, \`[Quelle: Gmail – Betreff "...", 18.08.](https://...)\`, \`[Quelle: Google Kalender – "1:1 Marion"](https://...)\`, \`[Quelle: Google Tasks – Liste "Meine Aufgaben"](https://tasks.google.com/)\`.
+   - Beispiele: \`[Quelle: Google Drive – "<Dokumentname>"](https://...)\`, \`[Quelle: Google Chat – "<Raumname>"](https://...)\`, \`[Quelle: Gmail – Betreff "...", <Datum>](https://...)\`, \`[Quelle: Google Kalender – "<Termin>"](https://...)\`, \`[Quelle: Google Tasks – Liste "<Liste>"](https://tasks.google.com/)\`.
 
   13. 📐 EINHEITLICHES AUSGABEFORMAT (7 ABSCHNITTE, DETERMINISTISCH & OHNE TABELLEN):
     - Wenn ein Daily Briefing, Sync, Status-Bericht oder Lagebild angefragt wird, folge IMMER exakt dieser Reihenfolge. Keine Executive Summary vor Abschnitt 1:
@@ -2446,18 +2354,14 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
          • **Details:** <Wer, was, warum>
          • [Quelle: <Name>](<URL>)
        ---
-       ## 7. 📋 Kompakte Projektstatusübersicht (optional)
-       - Nur eine Zeile pro aktivem Projekt; keine Details oder To-dos wiederholen.
-       - Neue Projekte aus aktuellen Quellen aufnehmen, auch ohne lokale Memory-Datei (z. B. Avantgarde).
-       - [Quelle: <Name>](<URL>)
-     - Vermeide Dopplungen: Änderungen gehören ausschließlich in Abschnitt 1, Squad-/Kapazitätskontrollen ausschließlich in Abschnitt 2, dringende Projektklärungen in Abschnitt 5 und sonstige To-dos in Abschnitt 6. Abschnitt 7 bleibt kompakt.
+       - Vermeide Dopplungen: Änderungen gehören ausschließlich in Abschnitt 1, Ortsbeirats- & Kommunalthemen (Dorfbudget, Bürgeranliegen) ausschließlich in Abschnitt 2, dringende Projektklärungen in Abschnitt 5 und sonstige To-dos in Abschnitt 6.
 
 14. 🛡️ MANDATORISCHE SELBSTKONTROLLE (SELF-AUDIT VOR DER AUSGABE):
    - Führe vor der Ausgabe eine interne Selbstkontrolle durch:
      1. Wurden wirklich ALLE relevanten Quellen (Drive-Transkripte, Google Chat, E-Mails, Kalender, Tasks) lückenlos geprüft?
      2. Wurde kein aktives Kundenprojekt ausgelassen?
      3. Wurden alle [ERLEDIGT]-Tasks und expliziten Nutzerkorrekturen berücksichtigt, ohne offene Tasks desselben Projekts zu unterdrücken?
-     4. Wurden überall die korrekten Schreibweisen ("domcura", "VOEST Alpine") verwendet?
+     4. Wurden die Schreibweisen von Projekt-, Kunden- und Personennamen exakt aus der aktuellsten datierten Quelle übernommen?
      5. Wurde "Thursdays for Data" silent ignoriert und KEIN "Punkt 4: Ignorierte interne Termine" erzeugt?
      6. Sind alle Quellenangaben als anklickbare Markdown-Links formatiert?
 
@@ -2574,19 +2478,28 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     emailsContext,
     eventsContext,
     chatsContext,
-    tasksContext,
-    odooContext,
-    jiraContext
+    tasksContext
   ] = await Promise.all([
     fetchDriveContext(accessToken),
     fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
-    fetchTasks(oauth2Client, recordVerbatimEvidence),
-    fetchOdooProjectStatusContext(),
-    fetchAtlassianJiraStatusContext()
+    fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
+  // Odoo und Jira sind bewusst entfernt: keine Projektdaten aus diesen Systemen im Briefing.
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
+  // Telegram-Session-Probleme dürfen nicht still untergehen: gut sichtbarer Hinweis im Briefing.
+  const telegramAuthBroken = /Telegram (nicht angemeldet|Authentifizierung abgelaufen)/i.test(telegramContext);
+  const telegramWarningBlock = telegramAuthBroken
+    ? `> ⚠️ **TELEGRAM-QUELLE AUSGEFALLEN:** Die Telegram-Session ist abgelaufen oder nicht eingerichtet. Dieses Briefing enthält KEINE Telegram-Nachrichten (BRG Info etc.). Bitte einmalig neu anmelden: \`npm run agent -- telegram-auth\`\n\n`
+    : '';
+  const whatsAppAuthBroken = /WhatsApp(-Profil)? (nicht angemeldet|Authentifizierung abgelaufen|Initialisierungsfehler|Zeitüberschreitung|nicht geladen|ist gesperrt|nicht vollständig gelesen)/i.test(whatsAppContext);
+  if (whatsAppAuthBroken) {
+    console.warn(`[WhatsApp Quelle] Ausfall: ${whatsAppContext.trim().slice(0, 500)}`);
+  }
+  const whatsAppWarningBlock = whatsAppAuthBroken
+    ? `> ⚠️ **WHATSAPP-QUELLE AUSGEFALLEN:** Die WhatsApp-Quelle konnte nicht gelesen werden (Session nicht verknüpft, abgelaufen, gesperrt oder Zeitüberschreitung). Dieses Briefing enthält KEINE WhatsApp-Nachrichten. Details: ${whatsAppContext.trim().slice(0, 300)}\n\n`
+    : '';
   const davidAgendaContext = extractDavidOneOnOneAgenda(tasksContext);
   const localMemoryContext = loadLocalMemoryContext();
   const sourceDigest = dailySourceDigest({ drive: driveContext, emails: emailsContext, events: eventsContext, chats: chatsContext, tasks: tasksContext });
@@ -2618,10 +2531,10 @@ ${skillContext}
  WICHTIGE LAYOUT- & FORMATIERUNGSREGELN:
  - HEADER: Beginne direkt mit dem Briefing-Titel (z. B. "# ☀️ Tägliches Management-Update (${nowStr})"). Keine Executive Summary und keine Aufzählung von Datenquellen vor Abschnitt 1!
 - STRIKTES TABELLEN-VERBOT: Verwende NIEMALS Markdown-Tabellen! Formatiere ALLE Inhalte in sauberen Text-Absätzen und Aufzählungslisten (Bullet Points).
-- ANKLICKBARE QUELLEN-LINKS: Jede Information und jedes To-Do MUSS am Ende mit einer anklickbaren Quellenangabe als Markdown-Link belegt werden (z. B. [Quelle: Google Drive – "Transkript PK Montag"](https://...), [Quelle: Gmail – Betreff "...", Datum](https://...), [Quelle: Google Kalender – "1:1 Marion"](https://...)). Nutze stets die Direktlinks aus den Quellen-Abschnitten!
-- KEINE IGNORIERTEN TERMINE IM BERICHT: Erstelle NIEMALS einen Abschnitt oder Punkt wie "Ignorierte interne Termine". "Thursdays for Data" wird komplett stillschweigend ignoriert.
+- ANKLICKBARE QUELLEN-LINKS: Jede Information und jedes To-Do MUSS am Ende mit einer anklickbaren Quellenangabe als Markdown-Link belegt werden (Direktlinks aus den Kontextblöcken). Nutze stets die Direktlinks aus den Quellen-Abschnitten!
+- KEINE IGNORIERTEN TERMINE IM BERICHT: Erstelle NIEMALS einen Abschnitt oder Punkt wie "Ignorierte interne Termine". "Thursdays for Data" sowie private Coaching/Mentoring-Themen (inkl. Coaching J., Schwingdings) werden komplett stillschweigend ignoriert.
 
- FESTE 7-TEILIGE BRIEFING-STRUKTUR OHNE DOPPLUNGEN:
+ FESTE 6-TEILIGE BRIEFING-STRUKTUR OHNE DOPPLUNGEN (genau diese sechs Abschnitte, keine weiteren):
 
  # ☀️ Tägliches Management-Update (${nowStr})
 
@@ -2635,10 +2548,11 @@ ${skillContext}
 
  ---
 
- ## 2. Squad Lead Control
- - **Allocation / Billability / Booking / Projektplanung / David Weekly**
-   • **Aktueller Stand:** <Nur aktuelle, source-backed Kontrollen>
-   • **Offene Entscheidung:** <Wer muss was klären, falls belegt>
+ ## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)
+ - **Dorfbudget / Fördermittel / Bürgeranliegen / Projekte / Beschlüsse**
+   • **Aktueller Stand:** <Aktueller Stand zu Dorfbudget, Zuwendungen, Bürgeranliegen, Förderprogrammen oder Ortsbeiratsthemen – nur aus aktuellen datierten Quellen>
+
+   • **Offene Entscheidung:** <Was steht an, wer muss was freigeben oder entscheiden>
    • [Quelle: <Name>](<URL>)
 
  ---
@@ -2668,10 +2582,6 @@ ${skillContext}
   • **Details:** <Wer, was, warum>
   • [Quelle: <Name>](<URL>)
 
-  ## 7. 📋 Kompakte Projektstatusübersicht (optional)
-- Nur für seltene Orientierung verwenden; pro aktivem Projekt maximal eine Zeile.
-- Keine Details, Meetings, Kapazitätsdaten oder To-dos wiederholen; dafür auf Abschnitt 1–6 verweisen.
-- Neue Projekte aus aktuellen Quellen aufnehmen, auch ohne lokale Memory-Datei (z. B. Avantgarde).
   • [Quelle: <Name>](<URL>)
 
 --- GOOGLE DRIVE (MEETING NOTES & DOKUMENTE) ---
@@ -2688,12 +2598,6 @@ ${projectCapacityEvidence}
 
 --- TO-DOS ---
 ${tasksContext}
-
---- ODOO PROJEKT- UND ZEITERFASSUNGSKONTEXT (READ-ONLY) ---
-${odooContext}
-
---- JIRA-PROJEKTSTATUS (READ-ONLY) ---
-${jiraContext}
 
 ${davidAgendaContext}
 
@@ -2713,35 +2617,29 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
 2a. KEINE EXECUTIVE SUMMARY VOR ABSCHNITT 1: Nach dem Titel beginnt das Briefing unmittelbar mit den Projekt- und Kapazitätsänderungen.
 3. MANDATORISCHE AKTUALITÄTSPRÜFUNG: Überprüfe jedes Thema vor der Anzeige auf Aktualität. Wenn eine E-Mail, Notiz oder Aufgabe länger als 7-14 Tage zurückliegt und kein anstehender Termin oder offener Task vorliegt, ist das Thema inaktiv und wird NICHT mehr angezeigt.
    Konfliktpriorität: neueste explizite Nutzerkorrektur im lokalen Memory > Google-Tasks-Status > neueste datierte Mail/Chat/Meeting-Notiz > ältere Quelle. [ERLEDIGT] darf nie aus alten Quellen reaktiviert werden; [OFFEN] bleibt aktiv.
-  4. Universelle Analyse von Transkripten & Projekt-Zuweisungen: Analysiere Transkripte und Mitschriften aus E-Mails, Drive und Besprechungen lückenlos und leite konkrete To-Dos für jede Hardy zugewiesene Aufgabe, Zusage oder Projektverantwortung ab. Eine aktuelle Mail oder Chat-Nachricht mit Projektübernahme, neuer PM-Verantwortung, neuem Kundenkontext oder neuem Delivery-Stream erzeugt ein eigenständiges Projekt, auch ohne lokale Memory-Datei. Beispiel: Avantgarde ist nicht KSGR.
+  4. Universelle Analyse von Transkripten & Projekt-Zuweisungen: Analysiere Transkripte und Mitschriften aus E-Mails, Drive und Besprechungen lückenlos und leite konkrete To-Dos für jede Hardy zugewiesene Aufgabe, Zusage oder Projektverantwortung ab. Eine aktuelle Mail oder Chat-Nachricht mit Projektübernahme, neuer PM-Verantwortung, neuem Kundenkontext oder neuem Delivery-Stream erzeugt ein eigenständiges Projekt, auch ohne lokale Memory-Datei. Projektnamen nur aus der Quelle übernehmen.
 5. End-to-End Pipeline-, Scoping- & SoW-Tracking: Erfasse Use Cases, Leistungsanforderungen und Deliverables aus Kunden-, Partner- und Vertriebs-Gesprächen. Tracke Wartezustände (z. B. Warten auf Use Cases/Input, anschließende SoW-Generierung) und schlage dafür proaktiv Nachfass- & Entwurfs-To-Dos vor.
-6. Proaktive Meeting-Vorbereitung (spätestens 1 Tag vorher): Bereite Hardy auf Kunden- und Use-Case-Meetings (wie Schwarz / DSV) für heute, morgen und Montag basierend auf vorhandenen Notizen und eingetragenen Vorbereitungen vor.
+6. Proaktive Meeting-Vorbereitung (spätestens 1 Tag vorher): Bereite Hardy auf Kunden- und Use-Case-Meetings für heute, morgen und Montag basierend auf vorhandenen Notizen und eingetragenen Vorbereitungen vor.
 7. Vorausschau: Schaue vorausschauend auf Montag und die nächste Woche.
 8. Vollständigkeit: Gehe lückenlos alle aktiven, unerledigten Themen durch und synchronisiere sie mit den neuesten Quellen.
-  8a. DOPPLUNGSVERBOT: Änderungen ausschließlich in Abschnitt 1, Squad-Lead-Kontrollen ausschließlich in Abschnitt 2, dringende Projektklärungen ausschließlich in Abschnitt 5 und weitere To-dos ausschließlich in Abschnitt 6. Meetings nennen nur Agenda und Vorbereitung. Abschnitt 7 enthält je Projekt nur eine kompakte Statuszeile ohne Wiederholung. Jede konkrete Information darf im gesamten Bericht nur einmal ausführlich erscheinen; an anderer Stelle nur mit einem kurzen Verweis auf den Ursprungsabschnitt.
-  8b. PRIORITÄT: Dringende Blocker, Entscheidungen, fällige Projektaktionen und konkrete nächste Schritte stehen vor der optionalen Projektstatusübersicht. Die Statusübersicht darf nie zulasten dieser Hinweise ausführlich werden.
+  8a. DOPPLUNGSVERBOT: Änderungen ausschließlich in Abschnitt 1, Ortsbeirat & Kommunales (Dorfbudget, Bürgeranliegen) ausschließlich in Abschnitt 2, dringende Projektklärungen ausschließlich in Abschnitt 5 und weitere To-dos ausschließlich in Abschnitt 6. Meetings nennen nur Agenda und Vorbereitung. Einen Projektstatus-Abschnitt gibt es nicht; Projektbezüge stehen nur in den Abschnitten 1 bis 6, je Punkt einmal.
+  8b. PRIORITÄT: Dringende Blocker, Entscheidungen, fällige Projektaktionen und konkrete nächste Schritte stehen in Abschnitt 5 und 6 und werden nie durch Hintergrundinformationen aus Abschnitt 1 bis 4 verdrängt.
   8c. TODO-SYNCHRONISATION: Jede konkrete Aktion in Abschnitt 5 oder 6 muss als task in ACTION_PROPOSALS gespiegelt werden. Jede solche task-Aktion braucht ein sinnvolles dueDate im Format YYYY-MM-DD; offene Projektaktionen ohne Enddatum sind nicht zulässig.
-  8e. EXPLIZITE BENUTZERBITTEN: Wenn Hardy in Chat, Mail oder Meeting ausdrücklich sagt, dass er sich um einen konkreten Kundenblocker oder Zugang kümmern will (z. B. WireGuard-Zugang für HHA), muss daraus zwingend ein eigener Google-Task mit Owner Hardy, konkreter nächster Aktion und Fälligkeitsdatum entstehen. Ein bloßer Hinweis in Abschnitt 1 reicht nicht.
+  8e. EXPLIZITE BENUTZERBITTEN: Wenn Hardy in Chat, Mail oder Meeting ausdrücklich sagt, dass er sich um einen konkreten Kundenblocker oder Zugang kümmern will (z. B. einen Zugang für ein Kundenprojekt aus der Quelle), muss daraus zwingend ein eigener Google-Task mit Owner Hardy, konkreter nächster Aktion und Fälligkeitsdatum entstehen. Ein bloßer Hinweis in Abschnitt 1 reicht nicht.
   8f. TASK-ABGLEICH: Offene konkrete Aktionen aus Abschnitt 5 und 6 müssen in Google Tasks erscheinen. Erledigte Google Tasks und explizit abgeschlossene Aktionen dürfen weder im Bericht als offene nächste Schritte erscheinen noch erneut angelegt werden. Wenn eine Aktion heute fällig oder überfällig ist, verwende heute (${dateStr}) als Fälligkeitsdatum, sofern keine neue realistische Frist belegt ist.
-  8d. E-MAIL-AUSGANG & FOLLOW-UP: Prüfe im E-Mail-Kontext ausdrücklich Nachrichten mit Status GESENDET. Wenn Hardy eine relevante Projekt-, Schätzungs-, Scope- oder Übergabemail gesendet hat und noch keine Antwort vorliegt, erstelle ein Nachhaken als Task mit Empfänger, Betreff, ursprünglichem Anliegen und gewünschter Antwort. Bei einer Abwesenheitsmeldung richte das dueDate auf den ersten oder zweiten Arbeitstag nach dem genannten Rückkehrdatum; ohne Rückkehrdatum auf 7–10 Tage nach Versand. Keine Follow-up-Aufgabe erzeugen, wenn bereits eine Antwort vorliegt oder ein gleichwertiger offener Google Task existiert.
-9. AKTUELLE SQUAD-SIGNALE: Der Abschnitt \`AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN\` ist für Mario- und Panda-Auslastung maßgeblich. Wenn dort Mario-Projektideen, Kapazitätsoptionen oder Pandas Wunsch nach neuen Projekten stehen, muss dies im Squad-Status beziehungsweise in der David-Weekly-Agenda erscheinen. Wenn dort kein aktueller Panda-Eintrag steht, darf kein alter "Panda ist voll ausgelastet"-Fakt ausgegeben werden.
-   10. PROJEKT- UND KAPAZITÄTSAUDIT: Prüfe den Abschnitt \`PROJEKT- UND KAPAZITÄTSÄNDERUNGEN / QUELLEN-AUDIT\` vollständig. Berücksichtige jede relevante Erwähnung zu Projekten, SOWs, Budgets, Pipelines, Staffing, Allocation, Billability, Resource Planner, Booking, Bench, Unassigned und Presales. Ergänze den Odoo-Read-only-Kontext mit aktuellem Projektstatus, Kunden-/Account-Zuordnung, aktiven Tasks, geplanten/effektiven Stunden, berechneter Time left, Überstundenstatus und nächsten Aktivitäten. Gleiche Projekt- und Kundennamen mit Jira ab und berücksichtige Jira-Status, Priorität, Assignee, Labels und aktuelle Updates, sofern eine passende Jira-Ressource oder ein passendes Projekt vorhanden ist. Jede materielle Änderung gegenüber dem bisherigen Stand muss im Briefing mit dem Präfix \`[ÄNDERUNG]\`, aktuellem Stand, Auswirkung und Quelle kenntlich gemacht werden. Odoo- und Jira-Daten sind Faktenquellen, aber nie automatische Schreibanweisungen.
-   10c. PLAYBOOK-EMPFEHLUNGEN BEI UNTERAUSLASTUNG: Wenn Odoo, Resource Planner oder aktuelle datierte Quellen eine Unterauslastung, freie Kapazität, auslaufende Reststunden oder fehlende Pipeline bei einem Squad-Mitglied zeigen, muss Abschnitt 2 einen expliziten Unterpunkt \'Playbook-Empfehlung für Hardy\' enthalten. Leite die Empfehlung aus dem live geladenen Downtime-Playbook und den Resource-Planner-Duties ab und priorisiere: P1 sofort billable Arbeit (bestehende Kunden, Cross-Deployment, Partner-Platzierung), P2 kurzfristig billable Arbeit (Presales, Angebote, PoCs, Account Expansion), P3 bewusst geplante Kostenreduktion (Urlaub/Überstundenabbau) und P4 Sellability (nachfrageorientierte Zertifizierung/Enablement). Nenne immer Person, erkannte Kapazitätslücke, konkrete nächste Maßnahme und die Playbook-/Regelquelle. Leadership-Hub-Seiten ergänzen diese Empfehlung. Keine Empfehlung erfinden, wenn die aktuelle Kapazitäts- oder Projektdatenlage sie nicht trägt.
-   10d. PROBATION-PROZESS: Wenn ein Squad-Mitglied in der Probezeit ist oder ein Onboarding ansteht, nutze die live geladene Confluence-Regelquelle \`Probation Period Management\`. Berücksichtige Managerpflichten, konkrete Ziele, regelmäßige Check-ins, Midpoint-/Final-Feedback in Personio, dokumentierte Konsequenzen und mögliche Risiken durch Aktivitäten vor dem offiziellen Startdatum. Leite nur belegte Hardy-To-dos ab und verlinke die Confluence-Quelle.
-   10e. PERSONIO-ENABLEMENT: Bei Führungs-, Onboarding- und Personio-Themen nutze zusätzlich die live geladene Regelquelle \`Personio Enablement Trainings for Leads\`. Berücksichtige dort definierte Lead-Trainings, Fristen, Verantwortlichkeiten und notwendige Personio-Schritte; leite daraus nur konkrete, aktuelle Empfehlungen für Hardy ab und verlinke die Confluence-Quelle.
-   10f. FREELANCER-JIRA-PROZESS: Bei Freelancer-Einsätzen, externen Ressourcen und zugehörigen Jira-Aufgaben nutze die live geladene Quelle \`Freelancer Engagement: New JIRA Process\`. Befolge die dort definierten Anlage-, Zuordnungs-, Status- und Verantwortlichkeitsregeln; erfinde keine Jira-Zuordnung und leite nur belegte Hardy-Aktionen ab.
-   10a. KANONISCHE PROJEKTNAMEN: Verwende für Projektbezeichnungen und IDs die Namen aus Odoo als Referenz. Wenn Mail, Chat, Drive oder Jira abweichende Kurzformen verwenden, führe den Odoo-Namen zuerst und ergänze die Kurzform nur in Klammern. Niemals Kundenname und Projektname vertauschen. Eine Projektzuordnung darf nur bei einer bestätigten Odoo-Projekt-/Task-Relation erfolgen; bei fehlendem Odoo-Treffer keine Projektzuordnung erfinden.
-   10b. HR-THEMA STATT PROJEKT: WorkFlex, Workation, Auslandsaufenthalt und zugehörige HR-/Steuerklärungen sind Personal- und Compliance-Themen, keine Projekte und keine Panda-Projekte. Auch wenn Sudipt Panda im Vorgang genannt wird, darf daraus kein Projektstatus, keine Projektallokation und kein Panda-Projekt abgeleitet werden. Nur ein bestätigter Odoo-Projekt-/Task-Treffer darf eine solche Zuordnung überschreiben.
+  8d. E-MAIL-AUSGANG & FOLLOW-UP: Prüfe im E-Mail-Kontext ausdrücklich Nachrichten mit Status GESENDET. Ein Nachhaken darfst du NUR anlegen, wenn die Zeile "AUSGANG: Keine Antwort im Thread" trägt. Steht dort "BEREITS BEANTWORTET", erstelle KEIN Nachhak-Task, auch nicht bei Abwesenheits- oder Rückfragen. Bei einer Abwesenheitsmeldung richte das dueDate auf den ersten oder zweiten Arbeitstag nach dem genannten Rückkehrdatum; ohne Rückkehrdatum auf 7–10 Tage nach Versand. Keine Follow-up-Aufgabe erzeugen, wenn ein gleichwertiger offener Google Task existiert.
+9. AKTUELLE SQUAD-SIGNALE: Der Abschnitt \`AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN\` ist für Auslastungsfragen im Team maßgeblich. Wenn dort Projektideen, Kapazitätsoptionen oder Wünsche nach neuen Projekten stehen, muss dies im Squad-Status beziehungsweise in der Weekly-Agenda erscheinen. Wenn dort kein aktueller Eintrag steht, darf kein alter Auslastungsfakt ausgegeben werden.
+10. PROJEKT- UND KAPAZITÄTSAUDIT: Prüfe den Abschnitt \`PROJEKT- UND KAPAZITÄTSÄNDERUNGEN / QUELLEN-AUDIT\` vollständig. Berücksichtige jede relevante Erwähnung zu Projekten, SOWs, Budgets, Pipelines, Staffing, Allocation, Billability, Resource Planner, Booking, Bench, Unassigned und Presales. Jede materielle Änderung gegenüber dem bisherigen Stand muss im Briefing mit dem Präfix \`[ÄNDERUNG]\`, aktuellem Stand, Auswirkung und Quelle kenntlich gemacht werden.
+ 10a. PROJEKTNAMEN: Niemals Kundenname und Projektname vertauschen. Keine Projektzuordnung ohne Beleg erfinden.
+ 10b. HR-THEMA STATT PROJEKT: Personal- und Compliance-Themen (z. B. WorkFlex, Workation, Auslandsaufenthalt, Steuerklärungen) sind keine Projekte. Daraus darf kein Projektstatus, keine Projektallokation und kein Projekt abgeleitet werden.
 10. Querabgleich mit Terminen: Wenn heute ein Meeting (z. B. 1:1 mit Teammitgliedern) ansteht, nimm besprechbare Punkte als Meeting-Agendapunkte auf – erstelle aber To-Dos für echte Vorbereitungsaufgaben und vergangene Action Items!
 11. Abgeschlossene Aufgaben: Alle mit [ERLEDIGT] markierten oder im lokalen Memory explizit abgeschlossenen Einzelaufgaben dürfen nie erneut vorgeschlagen werden. Projekte nicht pauschal abschliessen; offene Google Tasks desselben Projekts bleiben gültig.
 12. Ignorierte Termine: "Thursdays for Data" ist intern und wird immer still ignoriert. KEINEN Abschnitt "Ignorierte interne Termine" erstellen!
 13. Projekt-Fakten & Schreibweisen:
-    - "domcura" (immer kleingeschrieben).
-    - "VOEST Alpine" (immer "VOEST Alpine").
-    - Koenig & Bauer: Interne Treffen finden statt, um Budgetfrage zu klären (aus PK vom Montag).
-    - Lorenz Funding: Nicht nutzen, keine Screenshots/Anträge, Stunden werden intern umgebucht.
-     - Panda und Mario: Auslastung und Projektwünsche wöchentlich anhand der neuesten datierten Quellen aktualisieren; keine statische Kapazitätsaussage verwenden. HR-Themen wie WorkFlex/Workation strikt getrennt von Projektstatus und Projektallokation halten.
-    - HiBob / Nils Traut: Stundenzettel-Freigaben sind erledigt, keinesfalls als Task vorschlagen.
+    - Projekt-, Kunden- und Personennamen exakt so schreiben, wie sie in der jeweils aktuellsten datierten Quelle stehen. Keine Schreibweisen aus dem Code oder aus alten Notizen übernehmen.
+    - Interne Abstimmungen zu offenen Budgetfragen transparent im Projektstatus erwähnen, sofern eine aktuelle Quelle sie belegt.
+     - Auslastung und Projektwünsche wöchentlich anhand der neuesten datierten Quellen aktualisieren; keine statische Kapazitätsaussage verwenden. HR-Themen strikt getrennt von Projektstatus und Projektallokation halten.
+    - Automatisierte Verwaltungsmeldungen (z. B. bereits abgeschlossene Freigaben aus HR-Systemen), die in einer aktuellen Quelle als erledigt stehen, nicht als Task vorschlagen.
 14. OBLIGATORISCHE ANKLICKBARE QUELLENANGABEN (MARKDOWN-LINKS):
     - Jedes Projektupdate, jeder Status, jede Vorbereitungsnotiz und jedes To-Do MUSS am Ende mit einer anklickbaren Quellenangabe als Markdown-Link belegt werden (nutze die URLs aus den Kontextblöcken, z. B. \`[Quelle: Google Drive – "Transkript PK"](https://...)\`, \`[Quelle: Google Chat – "DATA Squad"](https://...)\`, \`[Quelle: Gmail – Betreff "...", Datum](https://...)\`, \`[Quelle: Google Kalender – Termin ...](https://...)\`, \`[Quelle: Google Tasks – Liste "..."](https://tasks.google.com/)\`).
 15. TEAM & ONBOARDING NEUER MITARBEITER (Z. B. SEPTEMBER):
@@ -2762,8 +2660,7 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
     dateStr,
   );
   summary = ensureActionSectionTasks(summary, tasksContext, dateStr);
-  summary = ensureMcpSourceMentions(summary, odooContext, jiraContext);
-  await publishDailyStatusToConfluence(summary, dateStr, odooContext);
+  // Odoo-/Jira-Abgleich und Confluence-Veröffentlichung sind entfernt.
 
   try {
     // Keep structured memory current on every daily run; operators can disable
@@ -2899,6 +2796,168 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   return result;
 }
 
+export async function performWeeklyReview(accessToken: string) {
+  const oauth2Client = getOAuth2Client(accessToken);
+  const dateStr = new Date().toISOString().split('T')[0];
+
+  console.log(`[Weekly Review] Performing weekly analysis for ${dateStr}...`);
+
+  const [
+    driveContext,
+    emailsContext,
+    eventsContext,
+    chatsContext,
+    telegramContext,
+    tasksContext
+  ] = await Promise.all([
+    fetchDriveContext(accessToken),
+    fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
+    fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
+    fetchRecentChats(oauth2Client, recordVerbatimEvidence),
+    fetchTelegramGroupMessages(recordVerbatimEvidence, 7),
+    fetchTasks(oauth2Client, recordVerbatimEvidence)
+  ]);
+  const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
+  const localMemoryContext = loadLocalMemoryContext();
+  const skillContext = loadSkillContext([
+    'workspace-context-ingestion',
+    'daily-management-briefing',
+    'project-and-customer-status',
+    'ortsbeirat-operations',
+    'brg-erzmarschall-operations',
+  ]);
+
+  const nowStr = new Date().toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' });
+
+  const prompt = `Erstelle einen fokussierten WOCHENRÜCKBLICK & WOCHENPLAN (Weekly Review) basierend auf allen verknüpften Quellen der letzten 7 Tage (Google Drive, E-Mails, Kalender, Google Chat, Telegram und Google Tasks).
+
+VERBINDLICHE SKILLS:
+${skillContext}
+
+WICHTIGE LAYOUT- & FORMATIERUNGSREGELN:
+- HEADER: Beginne direkt mit "# 📅 Wochenrückblick & Wochenplan (${nowStr})". Keine Executive Summary davor!
+- STRIKTES TABELLEN-VERBOT: Keine Markdown-Tabellen, nur Absätze und Bullet Points.
+- ANKLICKBARE QUELLEN-LINKS: Jede materielle Aussage mit Markdown-Direktlink belegen.
+- Private Coaching/Mentoring-Themen (inkl. Coaching J., Schwingdings) sowie "Thursdays for Data" stillschweigend und komplett ignorieren.
+- Keine Empfehlung ohne aktuelle Quellenbasis; keine abgeschlossenen Themen aus alten Quellen reaktivieren.
+
+FESTE STRUKTUR:
+
+# 📅 Wochenrückblick & Wochenplan (${nowStr})
+
+---
+
+## 1. ✅ Erledigt diese Woche
+- Abgeschlossene Aufgaben, Beschlüsse, versendete Antworten (aus Tasks mit Status erledigt, Protokollen, Mails). Je Punkt eine Zeile + Quelle.
+
+## 2. ⏳ Liegengeblieben / Überfällig
+- Offene Tasks mit überschrittener oder dieser Woche fälliger Deadline, unbeantwortete wichtige Mails, unerledigte Beschlüsse aus Ratsprotokollen. Je Punkt: Was, seit wann, empfohlener nächster Schritt + Quelle.
+
+## 3. 🏰 BRG / Erzmarschall – Wochenstand
+- Fortschritt bei Servantenreform, Ratsreform, Feldscher-System, Sergeanten/Akademie; neue Themenmeldungen aus Telegram (BRG Info) als Kandidaten für die nächste Ratssitzung.
+
+## 4. 🏘️ Ortsbeirat & Kommunales – Wochenstand
+- Dorfbudget, Förderprogramme und Fristen aus aktuellen Quellen, Bürgeranliegen, aktuelle Vorhaben.
+
+## 5. 🎯 Plan für die kommende Woche
+- Maximal 7 priorisierte Punkte mit konkretem erstem Schritt und Zieltermin. Anstehende Kalendertermine der nächsten 7 Tage berücksichtigen.
+
+--- QUELLEN ---
+
+--- GOOGLE DRIVE (DOKUMENTE & PROTOKOLLE) ---
+${enrichedDriveContext}
+
+--- E-MAILS ---
+${emailsContext}
+
+--- KALENDER ---
+${eventsContext}
+
+--- CHATS & GOOGLE CHAT ---
+${chatsContext}
+
+--- TELEGRAM (AKTIVE CHATS) ---
+${telegramContext}
+
+--- GOOGLE TASKS (AUTORITATIVER STATUS) ---
+${tasksContext}
+
+--- LOKALES STRUKTURIERTES GEDÄCHTNIS ---
+${localMemoryContext}
+`;
+
+  const response = await generateAIContent({ contents: prompt });
+  const summary = response.text || 'Kein Weekly Review generiert.';
+
+  // In Drive speichern (fail-safe)
+  try {
+    const drive = await getDriveClient(accessToken);
+    const fileName = `Weekly_Review_${dateStr}.md`;
+    const media = { mimeType: 'text/markdown', body: summary };
+
+    let files: any[] = [];
+    let targetParents: string[] | undefined = undefined;
+
+    try {
+      const res = await drive.files.list({
+        q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
+        fields: 'files(id)'
+      });
+      files = res.data.files || [];
+      targetParents = [driveFolderId];
+    } catch (folderErr: any) {
+      console.warn(`[Weekly Review Drive] Ordner "${driveFolderId}" nicht erreichbar (${folderErr?.message || folderErr}). Speichere Weekly Review im Drive Root.`);
+    }
+
+    if (files.length > 0) {
+      await drive.files.update({ fileId: files[0].id, media: media });
+    } else {
+      const fileMetadata: any = { name: fileName, mimeType: 'text/markdown' };
+      if (targetParents) fileMetadata.parents = targetParents;
+      await drive.files.create({ requestBody: fileMetadata, media: media });
+    }
+  } catch (driveErr: any) {
+    console.error('Could not save weekly review to Google Drive:', driveErr?.message || driveErr);
+  }
+
+  // E-Mail senden
+  let emailSent = false;
+  let emailErrorMsg: string | null = null;
+  try {
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const profileRes = await gmail.users.getProfile({ userId: 'me' });
+    const emailAddress = profileRes.data.emailAddress;
+    if (emailAddress) {
+      const cleanEmailContent = cleanContentForEmail(summary);
+      const utf8Subject = `=?utf-8?B?${Buffer.from(`PCG Agent Weekly Review - ${dateStr}`).toString('base64')}?=`;
+      const encodedBody = Buffer.from(cleanEmailContent, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
+      const messageParts = [
+        `From: ${emailAddress}`,
+        `To: ${emailAddress}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        'MIME-Version: 1.0',
+        `Subject: ${utf8Subject}`,
+        '',
+        encodedBody,
+      ];
+      const encodedMessage = Buffer.from(messageParts.join('\r\n'))
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+      await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage } });
+      console.log('Weekly review email sent successfully to', emailAddress);
+      emailSent = true;
+    }
+  } catch (emailError: any) {
+    console.error('Failed to send weekly review email:', emailError?.message || emailError);
+    emailErrorMsg = emailError?.message || String(emailError);
+  }
+
+  return { summary, emailSent, emailErrorMsg, dateStr, success: true };
+}
+
 app.get('/api/cron/status', (req, res) => {
   const status = getCronStatus();
   const token = loadStoredToken();
@@ -2961,11 +3020,8 @@ app.get('/api/tags', async (req, res) => {
     const tagCounts = extractObsidianTags(allText);
 
     // Also inject canonical known PCG tags if not explicitly found in text
+    // Kunden- und Personen-Tags werden nur aus dem tatsächlich gefundenen Text übernommen, nie fest verdrahtet.
     const canonicalTags: { tag: string; defaultCount: number }[] = [
-      { tag: 'kunde/schwarz', defaultCount: (allText.match(/schwarz/gi) || []).length },
-      { tag: 'kunde/dsv', defaultCount: (allText.match(/dsv/gi) || []).length },
-      { tag: 'squad/marion', defaultCount: (allText.match(/marion/gi) || []).length },
-      { tag: 'squad/hardy', defaultCount: 1 },
       { tag: 'status/in-progress', defaultCount: (allText.match(/in-progress|in arbeit|offen/gi) || []).length },
       { tag: 'status/review', defaultCount: (allText.match(/review|abstimmung/gi) || []).length },
       { tag: 'prio/hoch', defaultCount: (allText.match(/🚨|wichtig|dringend|asap/gi) || []).length },
@@ -3000,11 +3056,7 @@ app.get('/api/tags', async (req, res) => {
         namespace = parts[0];
         name = parts.slice(1).join('/');
       } else {
-        if (tag === 'schwarz' || tag === 'dsv') {
-          namespace = 'kunde';
-        } else if (tag === 'marion' || tag === 'hardy') {
-          namespace = 'squad';
-        }
+        // Namespace nur aus dem Tag selbst ableiten, keine festen Kunden- oder Personen-Zuordnungen.
       }
 
       const item: TagItem = {

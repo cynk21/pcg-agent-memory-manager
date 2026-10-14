@@ -1,0 +1,357 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { createHash } from 'crypto';
+
+type RecordEvidence = (inputs: any[]) => void;
+
+const AUTH_DIR = path.join(process.cwd(), '.wwebjs_auth');
+const SESSION_DIR = path.join(process.cwd(), 'session');
+
+/**
+ * Kopiert die vorhandene WhatsApp-Verknüpfung in einen frischen Lauf-Ordner.
+ * Das Originalprofil wird nie direkt von einem Browser geöffnet, daher kann es nicht gesperrt werden.
+ */
+export function copyWhatsAppAuth(runDir: string): string | undefined {
+  // Der Reader nutzt LocalAuth ohne clientId: die Sitzung liegt unter <dataPath>/session.
+  // Quelle ist daher das bestehende session/-Verzeichnis, Ziel der gleichnamige Ordner im Lauf-Ordner.
+  if (!fs.existsSync(SESSION_DIR)) return undefined;
+  const skipped: string[] = [];
+  try {
+    fs.cpSync(SESSION_DIR, path.join(runDir, 'session'), {
+      recursive: true,
+      filter: (src) => {
+        if (/Singleton(Lock|Socket|Cookie)$/.test(src)) return false;
+        // Gesperrte Dateien (z. B. Cookies, von einem laufenden Chrome gehalten) überspringen, nicht den Abruf abbrechen.
+        try {
+          if (fs.statSync(src).isFile()) fs.accessSync(src, fs.constants.R_OK);
+          const fd = fs.openSync(src, 'r');
+          fs.closeSync(fd);
+        } catch {
+          skipped.push(src);
+          return false;
+        }
+        return true;
+      },
+    });
+    if (skipped.length > 0) {
+      console.warn(`[WhatsApp] ${skipped.length} gesperrte Profil-Datei(en) übersprungen: ${skipped.slice(0, 3).join(', ')}`);
+    }
+    return undefined;
+  } catch (err: any) {
+    return `(WhatsApp-Profil konnte nicht kopiert werden: ${err?.message || err}. Bitte erneut versuchen.)\n`;
+  }
+}
+
+/** Entfernt den Lauf-Ordner nach dem Abruf (Browser muss vorher beendet sein). */
+export function cleanupWhatsAppRunDir(runDir: string): void {
+  try {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  } catch {
+    // Temp-Ordner darf bleiben; das OS räumt ihn auf.
+  }
+}
+
+// Limits für WhatsApp-Nachrichten
+const MAX_CHATS = 50;
+const MAX_MESSAGES_PER_CHAT = 100;
+const MAX_MESSAGES_PER_LOW_PRIORITY_CHAT = 25;
+const MAX_TOTAL_MESSAGES = 600;
+
+export function isWhatsAppConfigured(): boolean {
+  if (fs.existsSync(AUTH_DIR) && fs.existsSync(path.join(AUTH_DIR, 'session-pcg-agent'))) {
+    return true;
+  }
+  if (fs.existsSync(SESSION_DIR) && fs.existsSync(path.join(SESSION_DIR, 'Default'))) {
+    return true;
+  }
+  return fs.existsSync(AUTH_DIR) && fs.readdirSync(AUTH_DIR).length > 0;
+}
+
+/** Chats, die komplett ignoriert werden (Komma-getrennt in .env, Teilstring-Match, case-insensitive). */
+function getExcludedChatPatterns(): string[] {
+  return (process.env.WHATSAPP_EXCLUDE_CHATS || '')
+    .split(',')
+    .map((s: string) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** Priorisierte Chats zuerst und mit vollem Nachrichtenlimit (Default: BRG, Rat, Gilde, Ortsbeirat, Glietz). */
+function getPriorityChatPatterns(): string[] {
+  const raw = process.env.WHATSAPP_PRIORITY_CHATS || 'BRG,Rat,Gilde,Komtur,Feldscher,Ortsbeirat,Glietz';
+  return raw.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+function isExcludedChat(title: string, excludePatterns: string[]): boolean {
+  const t = title.toLowerCase();
+  return excludePatterns.some((p: string) => t.includes(p));
+}
+
+function isPriorityChat(title: string, priorityPatterns: string[]): boolean {
+  const t = title.toLowerCase();
+  return priorityPatterns.some((p: string) => t.includes(p));
+}
+
+/** Stabile, nicht rückrechenbare Kurzkennung (SHA-256) statt Telefonnummer/LID. */
+export function maskWhatsAppId(raw: string): string {
+  return 'wa-' + createHash('sha256').update(raw).digest('hex').slice(0, 10);
+}
+
+/** Erkennt Telefonnummern und WhatsApp-Kennungen (@lid, @c.us, @s.whatsapp.net, @g.us). */
+export function isWhatsAppIdentifier(value: string): boolean {
+  const v = value.trim();
+  return /@(lid|c\.us|s\.whatsapp\.net|g\.us)\b/i.test(v) || /^\+?[\d\s()-]{7,}$/.test(v);
+}
+
+/** Absendername ohne Kennung; Nummern und LIDs werden zu einem neutralen Platzhalter. */
+export function displayWhatsAppSender(value?: string): string {
+  if (!value || isWhatsAppIdentifier(value)) return 'Teilnehmer';
+  return value;
+}
+
+/** Chat-Name ohne Kennung; Chats, deren Name eine Kennung ist, erhalten eine maskierte Kennung. */
+export function displayChatName(value: string): string {
+  return isWhatsAppIdentifier(value) ? `Chat ${maskWhatsAppId(value)}` : value;
+}
+
+function getChromeExecutablePath(): string | undefined {
+  const candidatePaths = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe'),
+  ];
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return undefined;
+}
+
+/**
+ * Prüft, ob ein Chrome-Profil im Session-/Auth-Verzeichnis noch gesperrt ist.
+ * Entfernt eine verwaiste Sperre nur, wenn sie nicht mehr gehalten wird (kein Browser-Lock-Ziel existiert).
+ * Gibt eine Meldung zurück, wenn das Profil belegt bleibt; sonst undefined.
+ */
+export function checkWhatsAppProfileLock(dirs: string[] = [AUTH_DIR, SESSION_DIR]): string | undefined {
+  const lockNames = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+  const held: string[] = [];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of lockNames) {
+      const lockPath = path.join(dir, name);
+      if (!fs.existsSync(lockPath)) continue;
+      try {
+        // Ein von einem laufenden Chrome gehaltenes Lock lässt sich nicht löschen; ein verwaistes schon.
+        fs.unlinkSync(lockPath);
+      } catch {
+        held.push(lockPath);
+      }
+    }
+  }
+  if (held.length > 0) {
+    return `(WhatsApp-Profil ist gesperrt: ${held.join(', ')}. Ein anderer Chrome-/WhatsApp-Prozess hält das Profil. Bitte Chrome-Prozess mit diesem Profil beenden und erneut versuchen.)\n`;
+  }
+  return undefined;
+}
+
+/**
+ * Liest alle AKTIVEN WhatsApp-Chats des verknüpften Accounts rein lesend aus.
+ * Es werden alle Nachrichten der letzten `daysBack` Tage (z. B. 2 bis 7 Tage) übernommen.
+ */
+export async function fetchWhatsAppMessages(
+  recordEvidence?: RecordEvidence,
+  daysBack: number = 7
+): Promise<string> {
+  if (!isWhatsAppConfigured()) {
+    return '(WhatsApp nicht angemeldet: Bitte führe "npm run agent -- whatsapp-auth" aus)\n';
+  }
+
+  const lockMessage = checkWhatsAppProfileLock();
+  if (lockMessage) {
+    return lockMessage;
+  }
+
+  let wwebjs: any;
+  try {
+    wwebjs = await import('whatsapp-web.js');
+  } catch {
+    return '(WhatsApp-Modul whatsapp-web.js nicht geladen: Bitte "npm run agent -- whatsapp-auth" ausführen)\n';
+  }
+
+  const { Client, LocalAuth } = wwebjs.default || wwebjs;
+  const chromePath = getChromeExecutablePath();
+
+  // Robust: Jeder Abruf nutzt eine frische Profil-Kopie in einem eigenen Temp-Ordner.
+  // So kann ein hängender oder fremder Browser das eigentliche Profil nie mehr sperren.
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pcg-wa-'));
+  const copyError = copyWhatsAppAuth(runDir);
+  if (copyError) {
+    cleanupWhatsAppRunDir(runDir);
+    return copyError;
+  }
+
+  const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: runDir }),
+    puppeteer: {
+      headless: true,
+      executablePath: chromePath,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+      ],
+    },
+  });
+
+  return new Promise<string>((resolve) => {
+    let isResolved = false;
+    const finish = async (result: string) => {
+      if (isResolved) return;
+      isResolved = true;
+      clearTimeout(timeout);
+      try { await client.destroy(); } catch {}
+      cleanupWhatsAppRunDir(runDir);
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      finish('(WhatsApp: Zeitüberschreitung beim Laden der Nachrichten - Session prüfen)\n');
+    }, 60000);
+
+    client.on('auth_failure', () => {
+      finish('(WhatsApp Authentifizierung fehlgeschlagen oder abgelaufen: Bitte "npm run agent -- whatsapp-auth" ausführen)\n');
+    });
+
+    client.on('qr', () => {
+      finish('(WhatsApp nicht angemeldet: Bitte führe "npm run agent -- whatsapp-auth" aus)\n');
+    });
+
+    client.on('ready', async () => {
+      try {
+        const page = (client as any).pupPage;
+        if (!page) {
+          return finish('(WhatsApp: Browser-Page nicht verfügbar)\n');
+        }
+
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+        const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
+
+        const excludePatterns = getExcludedChatPatterns();
+        const priorityPatterns = getPriorityChatPatterns();
+
+        // Extrahiere alle aktiven Chats und deren Nachrichten direkt aus dem In-Memory-Model
+        const extraction = await page.evaluate(async (cutoff: number, maxChats: number, maxPerChat: number, maxLowPerChat: number, maxTotal: number) => {
+          const collections = (window as any).require ? (window as any).require('WAWebCollections') : null;
+          if (!collections?.Chat) return { chats: [] };
+
+          const allChatModels = collections.Chat.getModelsArray ? collections.Chat.getModelsArray() : (collections.Chat.models || []);
+          const resChats: any[] = [];
+          let currentTotal = 0;
+
+          for (const chat of allChatModels) {
+            if (chat.isArchived || chat.archive) continue;
+            const chatTimestamp = chat.t || 0;
+            if (chatTimestamp < cutoff) continue;
+
+            const name = chat.name || chat.formattedTitle || chat.contact?.name || 'Unbekannter Chat';
+            const chatId = chat.id?._serialized || String(chat.id);
+            const isGroup = Boolean(chat.isGroup);
+
+            // Versuche Nachrichten zu laden falls leer
+            if (chat.loadEarlierMsgs && (!chat.msgs?.models || chat.msgs.models.length < 5)) {
+              try { await chat.loadEarlierMsgs(); } catch {}
+            }
+
+            const rawMsgs = (chat.msgs?.getModelsArray ? chat.msgs.getModelsArray() : chat.msgs?.models) || [];
+            const filteredMsgs = rawMsgs
+              .filter((m: any) => (m.t || 0) >= cutoff)
+              .map((m: any) => ({
+                id: m.id?._serialized || String(m.id?.id || m.id),
+                timestamp: m.t || 0,
+                body: (m.body || m.caption || '').trim(),
+                sender: m.notifyName || m.sender?.name || m.author?._serialized || m.from?._serialized || 'Teilnehmer',
+              }))
+              .filter((m: any) => m.body.length > 0)
+              .sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+            if (filteredMsgs.length > 0) {
+              resChats.push({
+                id: chatId,
+                name,
+                isGroup,
+                timestamp: chatTimestamp,
+                messages: filteredMsgs,
+              });
+              currentTotal += filteredMsgs.length;
+              if (resChats.length >= maxChats || currentTotal >= maxTotal) break;
+            }
+          }
+
+          return { chats: resChats };
+        }, cutoffTimestamp, MAX_CHATS, MAX_MESSAGES_PER_CHAT, MAX_MESSAGES_PER_LOW_PRIORITY_CHAT, MAX_TOTAL_MESSAGES);
+
+        const extractedChats = (extraction?.chats || [])
+          .filter((c: any) => !isExcludedChat(c.name, excludePatterns))
+          .sort((a: any, b: any) => {
+            const aPrio = isPriorityChat(a.name, priorityPatterns) ? 1 : 0;
+            const bPrio = isPriorityChat(b.name, priorityPatterns) ? 1 : 0;
+            if (aPrio !== bPrio) return bPrio - aPrio;
+            return b.timestamp - a.timestamp;
+          });
+
+        // Datenschutz: Telefonnummern und WhatsApp-Kennungen nie im Klartext weitergeben.
+        for (const c of extractedChats) {
+          c.name = displayChatName(c.name);
+          c.id = maskWhatsAppId(String(c.id));
+          c.messages = c.messages.map((m: any) => ({
+            ...m,
+            id: maskWhatsAppId(String(m.id)),
+            sender: displayWhatsAppSender(m.sender),
+          }));
+        }
+
+        if (extractedChats.length === 0) {
+          return finish('(WhatsApp: Keine aktiven Chats mit Nachrichten im Zeitfenster gefunden)\n');
+        }
+
+        let context = `Aktuelle WhatsApp-Nachrichten (letzte ${daysBack} Tage, rein lesend):\n`;
+        let totalMessages = 0;
+
+        for (const chat of extractedChats) {
+          context += `\n## Chat: "${chat.name}"${chat.isGroup ? ' (Gruppe)' : ''}\n`;
+          for (const msg of chat.messages) {
+            if (totalMessages >= MAX_TOTAL_MESSAGES) break;
+            const dateStr = msg.timestamp
+              ? new Date(msg.timestamp * 1000).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
+              : '';
+
+            if (recordEvidence) {
+              recordEvidence([{
+                sourceType: 'whatsapp',
+                sourceId: `whatsapp:${chat.id}:${msg.id}`,
+                content: `${chat.name} - ${msg.sender} [${dateStr}]: ${msg.body.replace(/\r?\n+/g, ' ')}`,
+                sourceTimestamp: msg.timestamp ? new Date(msg.timestamp * 1000).toISOString() : new Date().toISOString(),
+                author: msg.sender,
+                sourceUrl: `https://web.whatsapp.com`,
+                parentId: chat.id,
+                metadata: { platform: 'whatsapp', groupTitle: chat.name, isGroup: chat.isGroup },
+              }]);
+            }
+
+            context += `- [${dateStr}] ${msg.sender}: ${msg.body.replace(/\r?\n+/g, ' ')}\n`;
+            totalMessages++;
+          }
+        }
+
+        console.log(`[WhatsApp Reader] Erfolgreich ${totalMessages} Nachrichten aus ${extractedChats.length} Chats geladen.`);
+        return finish(context);
+      } catch (err: any) {
+        return finish(`(WhatsApp-Nachrichten konnten nicht vollständig gelesen werden: ${err?.message || err?.stack || err})\n`);
+      }
+    });
+
+    client.initialize().catch((err: any) => {
+      finish(`(WhatsApp Initialisierungsfehler: ${err?.message || err})\n`);
+    });
+  });
+}

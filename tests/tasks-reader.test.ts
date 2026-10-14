@@ -13,7 +13,7 @@ test('separates open and completed tasks and preserves due dates', async () => {
         data: {
           items: showCompleted
             ? [{ id: 'done-1', title: 'Erledigte Aufgabe', status: 'completed', completed: new Date().toISOString() }]
-            : [{ id: 'open-1', title: 'WireGuard Zugang prüfen', status: 'needsAction', due: '2026-09-18T00:00:00.000Z', notes: 'Public Keys anfordern' }],
+            : [{ id: 'open-1', title: 'Beispielaufgabe prüfen', status: 'needsAction', due: '2026-09-18T00:00:00.000Z', notes: 'Unterlagen anfordern' }],
         },
       }),
     },
@@ -21,9 +21,9 @@ test('separates open and completed tasks and preserves due dates', async () => {
 
   const context = await fetchTasks({}, input => evidence.push(...input), () => tasksApi as any);
 
-  assert.match(context, /\[OFFEN\] WireGuard Zugang prüfen/);
+  assert.match(context, /\[OFFEN\] Beispielaufgabe prüfen/);
   assert.match(context, /Fällig: 18\.9\.2026/);
-  assert.match(context, /Notiz: Public Keys anfordern/);
+  assert.match(context, /Notiz: Unterlagen anfordern/);
   assert.match(context, /\[ERLEDIGT\] Erledigte Aufgabe/);
   assert.equal(evidence.length, 2);
 });

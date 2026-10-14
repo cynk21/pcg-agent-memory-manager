@@ -1,28 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { detectStructuredMemoryChanges, ensureActionSectionTasks, ensureMeetingProtocolTasks, extractDavidOneOnOneAgenda, extractProjectCapacityEvidence, loadSkillContext, normalizeStructuredMemoryCategories, sanitizeActionProposals, sanitizeCurrentSquadCapacityClaims, validateDailyBriefingStructure } from '../server.ts';
+import { detectStructuredMemoryChanges, ensureActionSectionTasks, ensureMeetingProtocolTasks, extractDavidOneOnOneAgenda, extractProjectCapacityEvidence, loadSkillContext, normalizeStructuredMemoryCategories, removeDuplicateSectionItems, sanitizeActionProposals, sanitizeCurrentSquadCapacityClaims, validateDailyBriefingStructure } from '../server.ts';
 
 const tasksContext = `Google Tasks - AUTORITATIVE AUFGABENZUSTAENDE:
 OFFEN:
-- [OFFEN] Onboarding Michael vorbereiten | Liste: My Tasks
+- [OFFEN] Onboarding Max vorbereiten | Liste: My Tasks
 ERLEDIGT:
-- [ERLEDIGT] FNTV Cloud Function Timeout Alert pruefen | Liste: My Tasks`;
+- [ERLEDIGT] Erledigter Beispiel-Punkt Technik | Liste: My Tasks`;
 
 test('always exposes Besprechung David as the dedicated 1:1 agenda source', () => {
-  const context = '- [OFFEN] Besprechung David | Liste: My Tasks | Notiz: Lorenz, Staffing und Odoo klären';
+  const context = '- [OFFEN] Besprechung David | Liste: My Tasks | Notiz: Thema A, Planung und Tool-Abstimmung klären';
   const result = extractDavidOneOnOneAgenda(context);
 
   assert.match(result, /Besprechung David/);
-  assert.match(result, /Lorenz, Staffing und Odoo klären/);
+  assert.match(result, /Thema A, Planung und Tool-Abstimmung klären/);
   assert.match(result, /bei jeder Vorbereitung eines David-Termins berücksichtigt/);
 });
 
 test('separates concrete customer engagements into projects', () => {
   const [concept] = normalizeStructuredMemoryCategories([{
     category: 'customers',
-    slug: 'koenig-und-bauer',
+    slug: 'beispiel-kunde',
     type: 'Customer',
-    title: 'Koenig & Bauer',
+    title: 'Beispiel Kunde',
     description: 'Kundenprojekt',
     body: 'Das SOW und die Projektbudgetklärung laufen weiter.',
   }]);
@@ -71,217 +71,241 @@ test('loads only allowlisted workflow skills', () => {
   assert.doesNotMatch(result, /server\.ts/);
 });
 
-test('keeps current Panda capacity proposals for source-backed review', () => {
+test('keeps current team capacity proposals for source-backed review', () => {
   const text = `<ACTION_PROPOSALS>
 [
-  {"type":"task","title":"Panda: neue Projekte prüfen","details":{"notes":"Im aktuellen Weekly nach neuen Projekten gefragt."}}
+  {"type":"task","title":"Teammitglied: neue Projekte prüfen","details":{"notes":"Im aktuellen Weekly nach neuen Projekten gefragt."}}
 ]
 </ACTION_PROPOSALS>`;
 
   const result = sanitizeActionProposals(text, '', '');
 
-  assert.match(result, /Panda: neue Projekte prüfen/);
+  assert.match(result, /Teammitglied: neue Projekte prüfen/);
 });
 
-test('replaces stale Panda full-capacity claims with the latest source signal', () => {
+test('replaces stale full-capacity claims with the latest source signal', () => {
   const result = sanitizeCurrentSquadCapacityClaims(
-    '- **Squad DATA & AI**: Panda ist voll ausgelastet.',
-    '--- DOKUMENT / TRANSKRIPT: "AI/ DATA Team AWS Weekly - 2026/08/25" | Direktlink: https://example.test/weekly ---\nSudipt Panda meldet keine klare Pipeline und kein festes Budget; weitere Ideen für neue Projekte stehen im Raum.',
+    '- **Squad Beispiel**: Teammitglied Alpha ist voll ausgelastet.',
+    '--- DOKUMENT / TRANSKRIPT: "Team Weekly - 2026/08/25" | Direktlink: https://example.test/weekly ---\nTeammitglied Alpha meldet keine klare Pipeline und kein festes Budget; weitere Ideen für neue Projekte stehen im Raum.',
   );
 
   assert.match(result, /keine klare Pipeline/);
-  assert.doesNotMatch(result, /Panda ist voll ausgelastet/);
+  assert.doesNotMatch(result, /Teammitglied Alpha ist voll ausgelastet/);
   assert.match(result, /example\.test\/weekly/);
 });
 
 test('applies the same freshness guard to every squad member', () => {
   const result = sanitizeCurrentSquadCapacityClaims(
-    '- **Mario Pasculli** ist voll ausgelastet.\n- **Enrico Goerlitz** ist voll ausgelastet.',
-    '--- DOKUMENT / TRANSKRIPT: "Weekly" | Direktlink: https://example.test/weekly ---\nMario Pasculli hat Kapazität für neue Projekte.',
+    '- **Teammitglied Beta** ist voll ausgelastet.\n- **Teammitglied Gamma** ist voll ausgelastet.',
+    '--- DOKUMENT / TRANSKRIPT: "Weekly" | Direktlink: https://example.test/weekly ---\nTeammitglied Beta hat Kapazität für neue Projekte.',
   );
 
-  assert.match(result, /Mario Pasculli meldet laut aktueller datierter Quelle Kapazitätsbedarf/);
-  assert.match(result, /Enrico Goerlitzs aktueller Auslastungsstatus ist .* nicht belegt/);
+  assert.match(result, /Teammitglied Beta meldet laut aktueller datierter Quelle Kapazitätsbedarf/);
+  assert.match(result, /Teammitglied Gammas aktueller Auslastungsstatus ist .* nicht belegt/);
 });
 
 test('preserves project and capacity evidence for the source audit', () => {
   const result = extractProjectCapacityEvidence(
-    '--- DOKUMENT / TRANSKRIPT: "Weekly" | Direktlink: https://example.test/weekly ---\nPanda fragt nach neuen Projekten und Mario soll für AI Gateway eingeplant werden.',
+    '--- DOKUMENT / TRANSKRIPT: "Weekly" | Direktlink: https://example.test/weekly ---\nTeammitglied Alpha fragt nach neuen Projekten und Beta soll für Projekt Eins eingeplant werden.',
     'Betreff: Projektbudget und Staffing für September',
     'Resource Planner und Billability im Squad prüfen.',
   );
 
-  assert.match(result, /Panda fragt nach neuen Projekten/);
+  assert.match(result, /Teammitglied Alpha fragt nach neuen Projekten/);
   assert.match(result, /Projektbudget und Staffing/);
   assert.match(result, /Resource Planner/);
 });
 
-test('repairs an orphaned project status from its source link', () => {
-  const result = validateDailyBriefingStructure(`# ☀️ Tägliches Management-Update\n\n## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen\n\n## 2. Squad Lead Control\n\n## 3. 🚨 Proaktive Kunden- & Meeting-Vorbereitung\n\n## 4. 🔮 Vorausschau & Wochenausblick\n\n## 5. 🚨 Dringende Klärungen & Projekt-To-dos\n\n## 6. 💡 Weitere nächste Schritte\n\n## 7. 📋 Kompakte Projektstatusübersicht\n\n- **VOEST Alpine**\n  • **Status:** On Track\n\n  • **Status:** In Klärung\n  • [Quelle: Google Drive – "projects/lorenz-snack-world.md"](https://example.test/lorenz)`);
+test('briefing validator no longer requires or repairs a Section 7 project overview', () => {
+  const result = validateDailyBriefingStructure(`# ☀️ Tägliches Management-Update\n\n## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen\n\n## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)\n\n## 3. 🚨 Proaktive Kunden- & Meeting-Vorbereitung\n\n## 4. 🔮 Vorausschau & Wochenausblick\n\n## 5. 🚨 Dringende Klärungen & Projekt-To-dos\n\n## 6. 💡 Weitere nächste Schritte`);
 
-  assert.match(result, /- \*\*Lorenz Snack World\*\*\n  • \*\*Status:\*\* In Klärung/);
+  assert.doesNotMatch(result, /Kompakte Projektstatus/);
+  assert.match(result, /## 6\. 💡 Weitere nächste Schritte/);
 });
 
 test('mirrors concrete section actions into dated task proposals without reactivating completed tasks', () => {
-  const summary = `# Daily\n\n## 5. 🚨 Dringende Klärungen & Projekt-To-dos\n- **WireGuard-Zugang HHA einrichten** — Fälligkeit: 2026-09-18\n  • **Details:** Public Keys an Timo senden\n\n## 6. 💡 Weitere nächste Schritte\n- **Alte Aufgabe nicht reaktivieren** — Fälligkeit: 2026-09-18\n\n<ACTION_PROPOSALS>\n[]\n</ACTION_PROPOSALS>`;
+  const summary = `# Daily\n\n## 5. 🚨 Dringende Klärungen & Projekt-To-dos\n- **Beispiel-Zugang einrichten** — Fälligkeit: 2026-09-18\n  • **Details:** Zugangsdaten anfordern\n\n## 6. 💡 Weitere nächste Schritte\n- **Alte Aufgabe nicht reaktivieren** — Fälligkeit: 2026-09-18\n\n<ACTION_PROPOSALS>\n[]\n</ACTION_PROPOSALS>`;
   const tasks = `OFFEN:\n- [OFFEN] Bereits offener Punkt | Liste: My Tasks\nERLEDIGT:\n- [ERLEDIGT] Alte Aufgabe nicht reaktivieren | Liste: My Tasks`;
 
   const result = ensureActionSectionTasks(summary, tasks, '2026-09-18');
 
-  assert.match(result, /WireGuard-Zugang HHA einrichten/);
+  assert.match(result, /Beispiel-Zugang einrichten/);
   assert.match(result, /"dueDate": "2026-09-18"/);
   assert.doesNotMatch(result, /"title": "Alte Aufgabe nicht reaktivieren"/);
 });
 
-test('adds the Hardy action from the David/Jost meeting notes and skips it when completed', () => {
+test('adds the Hardy action from meeting notes and skips it when completed', () => {
   const summary = '# Daily\n\n<ACTION_PROPOSALS>\n[]\n</ACTION_PROPOSALS>';
-  const source = '[Hardy Engwer] Hochbahn Status klären: Jost nach dem aktuellen Status des Angebots fragen und Unterstützung anbieten.';
+  const source = '[Hardy Engwer] Angebotsstatus klären: Ansprechpartner nach dem aktuellen Stand fragen und Unterstützung anbieten.';
   const tasks = 'OFFEN:\nERLEDIGT:\n';
   const result = ensureMeetingProtocolTasks(summary, source, tasks, '2026-09-23');
 
-  assert.match(result, /Hochbahn Status klären/);
+  assert.match(result, /Angebotsstatus klären/);
   assert.match(result, /"dueDate": "2026-09-23"/);
   assert.doesNotMatch(
-    ensureMeetingProtocolTasks(summary, source, '- [ERLEDIGT] Jost nach dem Status des Angebots fragen | Liste: My Tasks', '2026-09-23'),
-    /meeting-protocol-jost-offer-status/,
+    ensureMeetingProtocolTasks(summary, source, '- [ERLEDIGT] Angebotsstatus klären | Liste: My Tasks', '2026-09-23'),
+    /"title": "Angebotsstatus klären"/,
   );
 });
 
 test('removes completed task from recommendations and proposals', () => {
   const text = `## 4. Konkrete naechste Schritte
-- **FNTV Cloud Function Timeout Alert pruefen** - Faellig: heute
+- **Erledigter Beispiel-Punkt Technik** - Faellig: heute
   Details: Fehler analysieren
 - **Neuen Punkt pruefen** - Faellig: morgen
   Details: neu
 
 <ACTION_PROPOSALS>
 [
-  {"type":"task","title":"FNTV Cloud Function Timeout Alert pruefen","details":{}},
+  {"type":"task","title":"Erledigter Beispiel-Punkt Technik","details":{}},
   {"type":"task","title":"Neuen Punkt pruefen","details":{}}
 ]
 </ACTION_PROPOSALS>`;
 
   const result = sanitizeActionProposals(text, tasksContext, '');
 
-  assert.doesNotMatch(result, /FNTV Cloud Function Timeout Alert/);
+  assert.doesNotMatch(result, /Erledigter Beispiel-Punkt Technik/);
   assert.match(result, /Neuen Punkt pruefen/);
 });
 
-test('removes a paraphrased completed Personio task from the report', () => {
+test('removes a paraphrased completed onboarding task from the report', () => {
   const text = `## 5. 🚨 Dringende Klärungen & Projekt-To-dos
-- **Arpit Gothwal: Rückmeldung zu Einarbeitung & Buddy-Zuweisung** — Fälligkeit: 2026-09-23
+- **Beispiel-Person: Rückmeldung zu Einarbeitung & Buddy-Zuweisung** — Fälligkeit: 2026-09-23
   • **Details:** Rückmeldung und Buddy festlegen.
 
 <ACTION_PROPOSALS>
 [
-  {"type":"task","title":"Arpit Gothwal: Rückmeldung zu Einarbeitung & Buddy-Zuweisung","details":{}}
+  {"type":"task","title":"Beispiel-Person: Rückmeldung zu Einarbeitung & Buddy-Zuweisung","details":{}}
 ]
 </ACTION_PROPOSALS>`;
-  const tasks = 'OFFEN:\nERLEDIGT:\n- [ERLEDIGT] Personio: Onboarding-To-dos Arpit Gothwal prüfen | Liste: My Tasks';
+  const tasks = 'OFFEN:\nERLEDIGT:\n- [ERLEDIGT] Personal-Tool: Onboarding-To-dos Beispiel-Person prüfen | Liste: My Tasks';
 
   const result = sanitizeActionProposals(text, tasks, '');
 
-  assert.doesNotMatch(result, /Arpit Gothwal: Rückmeldung/);
+  assert.doesNotMatch(result, /Beispiel-Person: Rückmeldung/);
 });
 
 test('keeps an open task when a matching historical task is completed', () => {
   const mixedTaskStates = `Google Tasks – AUTORITATIVE AUFGABENZUSTÄNDE:
 OFFEN:
-- [OFFEN] Freenet TV: Jira-Hierarchie für Odoo Task 4257 anlegen | Liste: My Tasks
+- [OFFEN] Beispiel Kunde: Jira-Hierarchie fuer Buchung Task 4257 anlegen | Liste: My Tasks
 ERLEDIGT:
-- [ERLEDIGT] Jira-Hierarchie für Freenet TV Buchung anlegen | Liste: My Tasks`;
+- [ERLEDIGT] Jira-Hierarchie für Beispiel Kunde Buchung anlegen | Liste: My Tasks`;
   const text = `## 4. Handlungsempfehlungen
-- **Jira-Hierarchie für Freenet TV Buchung anlegen** — Fälligkeit: heute
-  • **Details:** Odoo Task 4257 in Jira verknüpfen.
+- **Jira-Hierarchie für Beispiel Kunde Buchung anlegen** — Fälligkeit: heute
+  • **Details:** Task 4257 in Jira verknüpfen.
   • [Quelle: Google Tasks](https://tasks.google.com/)`;
 
   const result = sanitizeActionProposals(text, mixedTaskStates, '');
 
-  assert.match(result, /Jira-Hierarchie für Freenet TV Buchung anlegen/);
+  assert.match(result, /Jira-Hierarchie für Beispiel Kunde Buchung anlegen/);
 });
 
 test('does not create a duplicate for an open task', () => {
   const text = `<ACTION_PROPOSALS>
 [
-  {"type":"task","title":"Onboarding Michael vorbereiten","details":{}},
+  {"type":"task","title":"Onboarding Max vorbereiten","details":{}},
   {"type":"task","title":"Anderen neuen Punkt pruefen","details":{}}
 ]
 </ACTION_PROPOSALS>`;
 
   const result = sanitizeActionProposals(text, tasksContext, '');
 
-  assert.doesNotMatch(result, /Onboarding Michael vorbereiten/);
+  assert.doesNotMatch(result, /Onboarding Max vorbereiten/);
   assert.match(result, /Anderen neuen Punkt pruefen/);
 });
 
 test('matches real-world title variants despite details and spelling differences', () => {
   const realTasks = `Google Tasks - AUTORITATIVE AUFGABENZUSTAENDE:
 OFFEN:
-- [OFFEN] Dennis KSGR sauber aufsetzen und fragt nach best practices, da sein erstes Projekt hier | Liste: My Tasks
-- [OFFEN] Projektleitung Nestlim anfragen: Kontaktiere Nestlim bezueglich der Uebernahme der Projektleitung fuer Koenig und Bauer | Liste: My Tasks
+- [OFFEN] Beispiel Kunde Setup sauber aufsetzen und fragt nach best practices, da sein erstes Projekt hier | Liste: My Tasks
+- [OFFEN] Projektleitung Partner anfragen: Kontaktiere Partner bezueglich der Uebernahme der Projektleitung fuer Projekt Alpha | Liste: My Tasks
 ERLEDIGT:`;
   const text = `<ACTION_PROPOSALS>
 [
-  {"type":"task","title":"Dennis KSGR: Best Practices bereitstellen","details":{"title":"Dennis KSGR: Best Practices fuer Projekt-Setup bereitstellen","notes":"Jira und Confluence erklaeren"}},
-  {"type":"task","title":"Projektleitung Neslim anfragen fuer Koenig & Bauer","details":{"title":"Projektleitung Neslim anfragen fuer Koenig & Bauer","notes":"Verfuegbarkeit pruefen"}}
+  {"type":"task","title":"Beispiel Kunde: Best Practices bereitstellen","details":{"title":"Beispiel Kunde: Best Practices fuer Projekt-Setup bereitstellen","notes":"Jira und Confluence erklaeren"}},
+  {"type":"task","title":"Projektleitung Partner anfragen fuer Projekt Alpha","details":{"title":"Projektleitung Partner anfragen fuer Projekt Alpha","notes":"Verfuegbarkeit pruefen"}}
 ]
 </ACTION_PROPOSALS>`;
 
   const result = sanitizeActionProposals(text, realTasks, '');
 
-  assert.doesNotMatch(result, /Dennis KSGR/);
-  assert.doesNotMatch(result, /Projektleitung Neslim/);
+  assert.doesNotMatch(result, /Beispiel Kunde: Best Practices/);
+  assert.doesNotMatch(result, /Projektleitung Partner anfragen/);
 });
 
 test('filters completed recommendations without an action block', () => {
   const text = `## 4. Konkrete naechste Schritte
-- **FNTV Cloud Function Timeout Alert pruefen** - Faellig: heute
+- **Erledigter Beispiel-Punkt Technik** - Faellig: heute
   Details: Fehler analysieren
 - **Neuen Punkt pruefen** - Faellig: morgen
   Details: neu`;
 
   const result = sanitizeActionProposals(text, tasksContext, '');
 
-  assert.doesNotMatch(result, /FNTV Cloud Function Timeout Alert/);
+  assert.doesNotMatch(result, /Erledigter Beispiel-Punkt Technik/);
   assert.match(result, /Neuen Punkt pruefen/);
 });
 
-test('removes obsolete SUSE kickoff recommendation from an active project', () => {
+test('keeps the project status section intact without customer-specific corrections', () => {
   const text = `## 2. Projektstatus
-- **SUSE**
+- **Beispielprojekt**
   • **Status:** On Track
-  • **Aktueller Stand:** Juan arbeitet bereits am Projekt.
-  • **Nächste Schritte:** Du kannst nun das offizielle Kickoff-Meeting einplanen.
-  • [Quelle: Chat](https://example.com)
-- **Anderes Projekt**
-  • **Nächste Schritte:** Kickoff vorbereiten.`;
+  • **Aktueller Stand:** Projekt läuft.
+  • **Nächste Schritte:** Kickoff vorbereiten.
+  • [Quelle: Chat](https://example.com)`;
 
   const result = sanitizeActionProposals(text, '', '');
 
-  assert.doesNotMatch(result, /offizielle Kickoff-Meeting/);
-  assert.match(result, /Juan arbeitet bereits am Projekt/);
-  assert.match(result, /Anderes Projekt[\s\S]*Kickoff vorbereiten/);
+  assert.match(result, /Beispielprojekt/);
+  assert.match(result, /Projekt läuft/);
 });
 
 test('removes completed task sentences from Section 2 Nächste Schritte', () => {
-  const lorenzTasks = `Google Tasks - AUTORITATIVE AUFGABENZUSTAENDE:
+  const projectTasks = `Google Tasks - AUTORITATIVE AUFGABENZUSTAENDE:
 OFFEN:
-- [OFFEN] Onboarding Michael vorbereiten | Liste: My Tasks
+- [OFFEN] Onboarding Max vorbereiten | Liste: My Tasks
 ERLEDIGT:
-- [ERLEDIGT] Lorenz: Sudipt Pandas Stunden auf Task 362 umbuchen | Liste: My Tasks`;
+- [ERLEDIGT] Beispiel: Stunden auf Task 362 umbuchen | Liste: My Tasks`;
 
   const text = `## 2. Projektstatus
-- **Project Lorenz (Cure)**
+- **Beispielprojekt (Cure)**
   • **Status:** In Klärung
   • **Aktueller Stand:** Drive-Freigaben erteilt.
-  • **Nächste Schritte:** Sudipt Pandas falsch gebuchte Stunden von Ticket 112507 auf Task 362 verschieben. IT muss Passwort freischalten.
+  • **Nächste Schritte:** Beispiel: Stunden von Ticket 112507 auf Task 362 verschieben. IT muss Passwort freischalten.
   • [Quelle: Chat](https://example.com)
-- **SUSE**
+- **Zweites Projekt**
   • **Nächste Schritte:** Workshop vorbereiten.`;
 
-  const result = sanitizeActionProposals(text, lorenzTasks, '');
+  const result = sanitizeActionProposals(text, projectTasks, '');
 
-  assert.doesNotMatch(result, /Sudipt Pandas falsch gebuchte Stunden/);
+  assert.doesNotMatch(result, /Beispiel: Stunden von Ticket 112507/);
   assert.match(result, /IT muss Passwort freischalten/);
-  assert.match(result, /SUSE[\s\S]*Workshop vorbereiten/);
+  assert.match(result, /Zweites Projekt[\s\S]*Workshop vorbereiten/);
+});
+
+test('removes section 5/6 items that repeat a section 1/2 item', () => {
+  const text = `## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen
+- **Beispiel Kunde: Zugang für Partner klären**
+  • **Änderung:** Zugang offen.
+
+## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)
+- **Dorfbudget: Auszahlung vorbereiten**
+  • **Aktueller Stand:** avisiert.
+
+## 5. 🚨 Dringende Klärungen & Projekt-To-dos
+- **Beispiel Kunde: Zugang für Partner klären** — Fälligkeit: 2026-10-20
+  • **Details:** Zugangsdaten anfordern.
+- **Neue eigenständige Aufgabe prüfen** — Fälligkeit: 2026-10-21
+  • **Details:** eigene Aufgabe.
+
+## 6. 💡 Weitere nächste Schritte
+- **Dorfbudget: Auszahlung vorbereiten** — Fälligkeit: 2026-10-15
+  • **Details:** Belege bereithalten.`;
+
+  const result = removeDuplicateSectionItems(text);
+
+  assert.equal((result.match(/Beispiel Kunde: Zugang für Partner klären/g) || []).length, 1);
+  assert.equal((result.match(/Dorfbudget: Auszahlung vorbereiten/g) || []).length, 1);
+  assert.match(result, /Neue eigenständige Aufgabe prüfen/);
 });

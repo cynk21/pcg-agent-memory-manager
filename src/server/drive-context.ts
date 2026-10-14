@@ -76,7 +76,7 @@ export async function fetchDriveKnowledgeBaseContext(accessToken: string, driveF
     }
 
     const queries = [
-      "trashed = false and (name contains 'Schwarz' or name contains 'DSV' or name contains 'Vorbereitung' or name contains 'Use Case' or name contains 'Memory' or name contains 'Briefing' or name contains 'Meeting' or name contains 'Protokoll' or name contains 'Transkript' or name contains 'Transcript' or name contains 'Notes' or name contains 'Sync' or name contains 'Weekly' or name contains 'Wochen' or name contains 'Besprechung' or name contains 'Koenig' or name contains 'Bauer' or name contains 'PK' or name contains 'Lorenz' or name contains 'domcura' or name contains 'voestalpine' or name contains 'VOEST' or name contains 'Alpine' or name contains 'Fabian' or name contains 'Mario' or name contains 'Panda' or name contains 'Auslastung' or name contains 'Kapazität' or name contains 'Staffing' or name contains 'Billability' or name contains 'Allocation' or name contains 'Resource')",
+      "trashed = false and (name contains 'Vorbereitung' or name contains 'Use Case' or name contains 'Memory' or name contains 'Briefing' or name contains 'Meeting' or name contains 'Protokoll' or name contains 'Transkript' or name contains 'Transcript' or name contains 'Notes' or name contains 'Sync' or name contains 'Weekly' or name contains 'Wochen' or name contains 'Besprechung' or name contains 'PK' or name contains 'Ratssitzung' or name contains 'Ortsbeirat' or name contains 'Regionalbudget' or name contains 'Resource' or name contains 'Auslastung' or name contains 'Kapazität' or name contains 'Staffing')",
       "trashed = false and (name contains 'Einarbeitung' or name contains 'Einarbeitungsplan' or name contains 'Onboarding' or name contains 'Mitarbeiter' or name contains 'Plan' or name contains 'September' or name contains 'Welcome' or name contains 'Joiner' or name contains 'Schulung' or name contains 'Training' or name contains 'Squad' or name contains 'DATA' or name contains 'Handover')",
     ];
     const targetedFiles: any[][] = [];
@@ -98,9 +98,12 @@ export async function fetchDriveKnowledgeBaseContext(accessToken: string, driveF
     const isReadableFile = (file: any) => file.mimeType === 'text/markdown' || file.mimeType === 'text/plain' || file.mimeType === 'text/csv' ||
       file.mimeType?.includes('google-apps.document') || file.mimeType?.includes('google-apps.spreadsheet') || file.mimeType?.includes('google-apps.presentation') ||
       file.name?.endsWith('.md') || file.name?.endsWith('.txt') || file.name?.endsWith('.csv');
-    const eligibleFiles = Array.from(fileMap.values()).filter(file =>
-      file.modifiedTime && new Date(file.modifiedTime).getTime() >= cutoff && file.mimeType !== 'application/vnd.google-apps.shortcut' && isReadableFile(file)
-    );
+    const eligibleFiles = Array.from(fileMap.values()).filter(file => {
+      const name = (file.name || '').toLowerCase();
+      const filePath = (file.path || '').toLowerCase();
+      if (/coaching|mentoring\s*j/i.test(name) || /coaching|mentoring\s*j/i.test(filePath)) return false;
+      return Boolean(file.modifiedTime) && new Date(file.modifiedTime).getTime() >= cutoff && file.mimeType !== 'application/vnd.google-apps.shortcut' && isReadableFile(file);
+    });
     eligibleFiles.sort((a, b) => {
       const aMeeting = /transkript|transcript|meeting|notes|protokoll|besprechung/i.test(a.name || a.path || '');
       const bMeeting = /transkript|transcript|meeting|notes|protokoll|besprechung/i.test(b.name || b.path || '');
@@ -131,7 +134,7 @@ export async function fetchDriveKnowledgeBaseContext(accessToken: string, driveF
         else if (ageDays > 10) ageNotice = ` [Älterer Stand: ${ageDays} Tage]`;
         else ageNotice = ` (Stand: ${dateLabel})`;
       }
-      const isCustomerPrep = /schwarz|dsv|vorbereitung|use\s*case/i.test(file.path || file.name);
+      const isCustomerPrep = /vorbereitung|use\s*case/i.test(file.path || file.name);
       const prepHighlight = isCustomerPrep ? ' [⭐ KUNDEN-VORBEREITUNGS-DOKUMENT]' : '';
       const url = file.webViewLink || (file.mimeType?.includes('google-apps.document') ? `https://docs.google.com/document/d/${file.id}/edit` : file.mimeType?.includes('google-apps.spreadsheet') ? `https://docs.google.com/spreadsheets/d/${file.id}/edit` : `https://drive.google.com/file/d/${file.id}/view`);
       dependencies.recordEvidence([{ sourceType: 'drive', sourceId: file.id, content, sourceTimestamp: file.modifiedTime, sourceUrl: url, metadata: { name: file.name, path: file.path, mimeType: file.mimeType } }]);

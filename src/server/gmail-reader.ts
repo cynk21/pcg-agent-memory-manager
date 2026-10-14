@@ -16,6 +16,13 @@ export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidenc
       return result;
     };
     const messages = await listMessages('newer_than:7d -in:trash -in:spam');
+    // Gesendete Mails gezielt mitnehmen (45 Tage), damit bereits erledigte Follow-ups erkannt werden.
+    let sentMessages: any[] = [];
+    try {
+      sentMessages = await listMessages('in:sent newer_than:45d -in:trash -in:spam');
+    } catch (error: any) {
+      console.warn('Sent Gmail query notice:', error?.message || error);
+    }
     let targetedMessages: any[] = [];
     try {
       targetedMessages = await listMessages('newer_than:7d -in:trash -in:spam (transcript OR transkript OR "meeting notes" OR protokoll OR summary OR zusammenfassung OR "action items" OR todo OR to-do OR aufgabe OR projekt OR zugewiesen OR "next steps" OR handover OR scoping OR proposal OR sow OR "statement of work" OR "use case" OR "use cases" OR review OR retrospective OR alignment OR sync OR briefing OR absprache OR "Koenig" OR "Bauer" OR "Lorenz" OR "domcura" OR "voestalpine" OR "VOEST" OR "PK" OR "Einarbeitung" OR "Einarbeitungsplan" OR "Onboarding" OR "Mitarbeiter" OR "September" OR "Joiner" OR "Welcome" OR "Schulung")');
@@ -23,7 +30,7 @@ export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidenc
       console.warn('Targeted Gmail query notice:', error?.message || error);
     }
 
-    const ids = [...new Map([...messages, ...targetedMessages].filter(message => message.id).map(message => [message.id, message])).keys()];
+    const ids = [...new Map([...messages, ...sentMessages, ...targetedMessages].filter(message => message.id).map(message => [message.id, message])).keys()];
     const parsedEmails: any[] = [];
     for (let i = 0; i < ids.length; i += 10) {
       const chunkResults = await Promise.all(ids.slice(i, i + 10).map(async (msgId) => {
@@ -62,7 +69,7 @@ export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidenc
           let bodySnippet = bodyText.replace(/\r?\n+/g, ' ').trim() || snippet;
           if (bodySnippet.length > 2500) bodySnippet = bodySnippet.slice(0, 2500) + '... [Gekürzt]';
           const projectPattern = /transcript|transkript|meeting\s*notes|protokoll|summary|zusammenfassung|action\s*items?|todo|to-do|aufgabe|zugewiesen|projekt|next\s*steps|handover|scoping|proposal|sow|statement\s*of\s*work|use\s*cases?|review|retrospective|alignment|sync|briefing|absprache/i;
-          return { id: msgId, internalDate, statusStr, from, to, subject, date, bodySnippet, bodyText: bodyText || snippet, attachments: attachments.join(', '), isTranscriptOrProject: projectPattern.test(subject) || projectPattern.test(bodySnippet) };
+          return { id: msgId, threadId: message.threadId || '', internalDate, statusStr, from, to, subject, date, bodySnippet, bodyText: bodyText || snippet, attachments: attachments.join(', '), isTranscriptOrProject: projectPattern.test(subject) || projectPattern.test(bodySnippet) };
         } catch (error: any) {
           console.warn(`Gmail msg get notice ${msgId}:`, error?.message || error);
           return null;
@@ -82,6 +89,19 @@ export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidenc
     })));
     parsedEmails.sort((a, b) => b.internalDate - a.internalDate || (a.id || '').localeCompare(b.id || ''));
 
+    // Antwortstatus je Thread: Eine gesendete Mail gilt als beantwortet, wenn im selben Thread
+    // eine neuere Mail von einem anderen Absender liegt (nicht von Hardy selbst).
+    const ownSenderPattern = /hardy|engwer/i;
+    const repliedThreads = new Set<string>();
+    for (const sent of parsedEmails.filter(e => e.statusStr === 'GESENDET' && e.threadId)) {
+      const hasNewerReply = parsedEmails.some(other =>
+        other.threadId === sent.threadId &&
+        other.internalDate > sent.internalDate &&
+        !ownSenderPattern.test(other.from || '')
+      );
+      if (hasNewerReply) repliedThreads.add(sent.threadId);
+    }
+
     let context = 'Neueste aktive E-Mails & Transkripte (Posteingang und Archiv; ohne Papierkorb/Spam):\n';
     const nowMs = Date.now();
     const contextEmails = parsedEmails.filter(email => {
@@ -93,7 +113,9 @@ export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidenc
       if (daysOld > 7) continue;
       if (/hibob|stundenzettel|time\s*off/i.test(email.from) || /hibob.*(stundenzettel|approved|submitted|genehmigt|freigabe)/i.test(email.subject)) continue;
       const ageFlag = daysOld > 21 ? ` [⚠️ HISTORISCHE E-MAIL (${daysOld} Tage alt) - VORHER PRÜFEN OB NOCH AKTUELL; NICHT als aktuelle Prio oder neue To-Dos interpretieren]` : daysOld > 7 ? ` [Älterer Thread (${daysOld} Tage alt) - Aktualität vor Erwähnung gegenprüfen]` : '';
-      const direction = email.statusStr === 'GESENDET' ? ` | Empfänger: ${email.to || 'unbekannt'} | AUSGANG: Für offene Antworten Follow-up prüfen` : '';
+      const direction = email.statusStr === 'GESENDET'
+        ? ` | Empfänger: ${email.to || 'unbekannt'} | AUSGANG: ${repliedThreads.has(email.threadId) ? 'BEREITS BEANTWORTET – KEIN NACHHAK-TASK' : 'Keine Antwort im Thread – Follow-up prüfen'}`
+        : '';
       const flag = email.isTranscriptOrProject ? ' [⭐ ENTHÄLT TRANSKRIPT / PROJEKT / USE-CASE / AUFGABEN]' : '';
       const url = `https://mail.google.com/mail/u/0/#all/${email.id}`;
       const attachments = email.attachments ? ` | Anhänge: ${email.attachments}` : '';

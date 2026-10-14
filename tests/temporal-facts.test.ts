@@ -8,7 +8,7 @@ import { generateFactId, queryTemporalTimeline, upsertTemporalFact } from '../te
 test('creates a temporal fact with validity window', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'facts-test-'));
   const { fact, invalidatedCount } = upsertTemporalFact({
-    subject: 'Sudipt Panda',
+    subject: 'Teammitglied Beispiel',
     predicate: 'capacity_status',
     object: 'looking_for_projects',
     validFrom: '2026-08-25T09:00:00Z',
@@ -17,9 +17,9 @@ test('creates a temporal fact with validity window', () => {
 
   assert.equal(invalidatedCount, 0);
   assert.equal(fact.status, 'active');
-  assert.equal(fact.subject, 'Sudipt Panda');
+  assert.equal(fact.subject, 'Teammitglied Beispiel');
 
-  const timeline = queryTemporalTimeline({ subject: 'Sudipt Panda' }, tmpDir);
+  const timeline = queryTemporalTimeline({ subject: 'Teammitglied Beispiel' }, tmpDir);
   assert.equal(timeline.length, 1);
   assert.equal(timeline[0].object, 'looking_for_projects');
 });
@@ -27,14 +27,14 @@ test('creates a temporal fact with validity window', () => {
 test('invalidates previous active fact when a contradictory fact arrives for same subject and predicate', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'facts-test-'));
   upsertTemporalFact({
-    subject: 'Mario Pasculli',
+    subject: 'Teammitglied Beispiel',
     predicate: 'availability_status',
     object: 'fully_available',
     validFrom: '2026-08-10T00:00:00Z',
   }, tmpDir);
 
   const { fact: newFact, invalidatedCount } = upsertTemporalFact({
-    subject: 'Mario Pasculli',
+    subject: 'Teammitglied Beispiel',
     predicate: 'availability_status',
     object: 'medical_leave_two_weeks',
     validFrom: '2026-08-24T00:00:00Z',
@@ -44,11 +44,11 @@ test('invalidates previous active fact when a contradictory fact arrives for sam
   assert.equal(invalidatedCount, 1);
   assert.equal(newFact.status, 'active');
 
-  const activeTimeline = queryTemporalTimeline({ subject: 'Mario Pasculli' }, tmpDir);
+  const activeTimeline = queryTemporalTimeline({ subject: 'Teammitglied Beispiel' }, tmpDir);
   assert.equal(activeTimeline.length, 1);
   assert.equal(activeTimeline[0].object, 'medical_leave_two_weeks');
 
-  const fullTimeline = queryTemporalTimeline({ subject: 'Mario Pasculli', includeInvalidated: true }, tmpDir);
+  const fullTimeline = queryTemporalTimeline({ subject: 'Teammitglied Beispiel', includeInvalidated: true }, tmpDir);
   assert.equal(fullTimeline.length, 2);
   const oldFact = fullTimeline.find(f => f.object === 'fully_available');
   assert.equal(oldFact?.status, 'invalidated');

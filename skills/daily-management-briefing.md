@@ -19,7 +19,8 @@ Produce a concise, source-backed daily briefing from the curated memory and curr
 ## Output
 
 - Project and capacity changes, marked with `[ÄNDERUNG]`
-- Squad Lead Control: allocation, billability, project planning, booking completeness and David Weekly
+- Ortsbeirat & Kommunales (Glietz / Märkische Heide): Dorfbudget, Förderprogramme, Bürgeranliegen, Beschlüsse und Vorhaben, jeweils aus aktuellen Quellen.
+- BRG Erzmarschall & Ratsarbeit: Protokoll-Aktionspunkte, Feldscher-System, Servanten & Ratsreform.
 - Meeting preparation
 - Urgent project clarifications and concrete project actions before the status overview
 - Compact project and customer status at the end, without repeating earlier sections
@@ -33,4 +34,4 @@ Produce a concise, source-backed daily briefing from the curated memory and curr
 - Never include ignored internal meetings as a separate section.
 - Do not add an executive summary before the change section.
 - Do not repeat the same change, capacity fact or project action in later sections.
-- Treat a current project takeover or new PM assignment as a distinct project (for example Avantgarde, not KSGR).
+- Treat a current project takeover or new PM assignment as a distinct project; never merge it into an existing project name without a source.
