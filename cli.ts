@@ -931,6 +931,38 @@ async function cmdTaskDone(args: string[]) {
   console.log(`Task erledigt: ${result.title} (ID: ${result.id})`);
 }
 
+async function cmdMailRead(args: string[]) {
+  const id = args.find((a) => !a.startsWith('-'));
+  if (!id) {
+    console.error('Nutzung: npm run agent -- mail-read <messageId> (ID aus dem Gmail-Link nach "#all/")');
+    process.exit(1);
+  }
+  const accessToken = await getAccessToken();
+  const oauth2Client = getOAuth2Client(accessToken);
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+  // Nur lesend: format=full holt Header und Text, es wird nichts verändert.
+  const msg = (await gmail.users.messages.get({ userId: 'me', id, format: 'full' })).data;
+  const headers = msg.payload?.headers || [];
+  const header = (name: string) => headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
+  const decode = (data?: string | null) => (data ? Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8') : '');
+  const findText = (part: any): string => {
+    if (!part) return '';
+    if (part.mimeType === 'text/plain' && part.body?.data) return decode(part.body.data);
+    for (const sub of part.parts || []) {
+      const text = findText(sub);
+      if (text) return text;
+    }
+    return '';
+  };
+  const body = findText(msg.payload) || decode(msg.payload?.body?.data);
+  console.log(`Von: ${header('From')}`);
+  console.log(`An: ${header('To')}`);
+  console.log(`Datum: ${header('Date')}`);
+  console.log(`Betreff: ${header('Subject')}`);
+  console.log('');
+  console.log(body.trim() || '(kein Textkörper gefunden)');
+}
+
 async function cmdEmail(args: string[]) {
   const to = flagValue(args, '--to');
   const subject = flagValue(args, '--subject');
@@ -1245,6 +1277,7 @@ async function main() {
       case 'todos': return await cmdTodos();
       case 'task': return await cmdTask(args.slice(1));
       case 'task-done': return await cmdTaskDone(args.slice(1));
+      case 'mail-read': return await cmdMailRead(args.slice(1));
       case 'email': return await cmdEmail(args.slice(1));
       case 'calendar': return await cmdCalendar(args.slice(1));
       case 'evidence-search': return await cmdEvidenceSearch(args.slice(1));
