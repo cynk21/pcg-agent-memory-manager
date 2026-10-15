@@ -2386,6 +2386,11 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
             console.warn(`Task nicht angelegt (${title}): ${taskErr?.message || taskErr}`);
           }
         }
+        // Neu angelegte Tasks erscheinen als Task (Chat/Todos), nicht zusätzlich als offener Report-Punkt.
+        const newlyCreated = createdTitles.filter(t => t.length > 0);
+        if (newlyCreated.length > 0) {
+          summary = removeCompletedTaskRecommendations(summary, newlyCreated, []);
+        }
       } catch (parseErr) {
         console.warn("ACTION_PROPOSALS konnte nicht geparst werden:", parseErr);
       }
