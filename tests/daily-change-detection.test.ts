@@ -13,6 +13,12 @@ test('splits a source context into stable per-item blocks', () => {
   assert.notEqual(blocks[0][0], blocks[1][0]);
 });
 
+test('an email that only got older is still treated as unchanged', () => {
+  const day1 = '- [Status: INBOX] Von: a@example.test | Betreff: Frage [⚠️ HISTORISCHE E-MAIL (25 Tage alt) - VORHER PRÜFEN]';
+  const day2 = '- [Status: INBOX] Von: a@example.test | Betreff: Frage [⚠️ HISTORISCHE E-MAIL (26 Tage alt) - VORHER PRÜFEN]';
+  assert.equal(fingerprint(day1), fingerprint(day2));
+});
+
 test('selects only changed or new blocks compared with the previous run', () => {
   const blocks: [string, string][] = [['gmail:a', 'Text A'], ['gmail:b', 'Text B neu']];
   const previous = { 'gmail:a': fingerprint('Text A'), 'gmail:b': fingerprint('Text B alt') };

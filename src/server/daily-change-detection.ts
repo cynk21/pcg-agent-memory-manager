@@ -39,7 +39,9 @@ export function splitSourceBlocks(sourceName: string, context: string): [string,
 }
 
 export function fingerprint(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
+  // Zeitabhängige Zusätze (Altersvermerk) ändern sich täglich, nicht der Inhalt.
+  const stable = text.replace(/\s*\[⚠️ HISTORISCHE E-MAIL \(\d+ Tage alt\)[^\]]*\]/g, '');
+  return createHash('sha256').update(stable, 'utf8').digest('hex');
 }
 
 export function loadDailyState(file: string = STATE_FILE): Record<string, string> {
