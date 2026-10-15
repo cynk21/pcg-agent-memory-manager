@@ -25,3 +25,6 @@ agent-memory/
 .evidence-ledger/
 .antigravity/
 .agents/
+
+# Lokaler Zustand der Änderungserkennung im Daily-Lauf
+.daily-state.json

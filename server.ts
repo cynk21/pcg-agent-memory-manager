@@ -17,6 +17,7 @@ import { fetchTasks } from './src/server/tasks-reader.ts';
 import { fetchTelegramGroupMessages } from './src/server/telegram-reader.ts';
 import { fetchWhatsAppMessages } from './src/server/whatsapp-reader.ts';
 import { DAILY_LOOKBACK_DAYS } from './src/server/daily-window.ts';
+import { loadDailyState, saveDailyState, selectChangedBlocks, splitSourceBlocks } from './src/server/daily-change-detection.ts';
 import { getFileContent, listAllFiles } from './src/server/drive-reader.ts';
 import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readDriveKnowledgeBaseContext } from './src/server/drive-context.ts';
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
@@ -2125,6 +2126,21 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
   // Kurze Fehlerliste aller Quellen für die Chat-Meldung (vor den KI-Vorschlägen).
   const sourceFailures: string[] = [];
+  // Änderungserkennung: nur neue oder geänderte Quellenblöcke gehen ans Modell.
+  const previousDailyState = loadDailyState();
+  const nextDailyState: Record<string, string> = {};
+  const pickChanged = (name: string, ctx: string | undefined): string => {
+    if (!ctx) return '';
+    const sel = selectChangedBlocks(splitSourceBlocks(name, ctx), previousDailyState);
+    Object.assign(nextDailyState, sel.next);
+    if (sel.changed.length === 0) return `(Keine neuen oder geänderten Einträge seit dem letzten Lauf: ${sel.unchangedCount} unverändert)`;
+    return sel.changed.map(([, content]) => content).join('\n');
+  };
+  const changedDriveContext = pickChanged('drive', enrichedDriveContext);
+  const changedEmailsContext = pickChanged('gmail', emailsContext);
+  const changedChatsContext = pickChanged('chat', chatsContext);
+  const changedTelegramContext = pickChanged('telegram', telegramContext);
+  const changedWhatsAppContext = pickChanged('whatsapp', whatsAppContext);
   const failurePattern = /^\((?:[^)]*?)(nicht angemeldet|nicht konfiguriert|Authentifizierung abgelaufen|gesperrt|Initialisierungsfehler|Zeitüberschreitung|nicht geladen|nicht erreichbar|Fehler|fehlgeschlagen|notice)/i;
   const sourceChecks: [string, string | undefined][] = [
     ['Telegram', telegramContext],
@@ -2230,22 +2246,22 @@ ${skillContext}
   • [Quelle: <Name>](<URL>)
 
 --- GOOGLE DRIVE (MEETING NOTES & DOKUMENTE) ---
-${enrichedDriveContext}
+${changedDriveContext}
 
 --- E-MAILS ---
-${emailsContext}
+${changedEmailsContext}
 
 --- KALENDER ---
 ${eventsContext}
 
 --- CHATS & GOOGLE CHAT ---
-${chatsContext}
+${changedChatsContext}
 
 --- TELEGRAM (BRG INFO & GILDENKANÄLE) ---
-${telegramContext}
+${changedTelegramContext}
 
 --- WHATSAPP (GRUPPEN & CHATS) ---
-${whatsAppContext}
+${changedWhatsAppContext}
 
 --- AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN ---
 ${currentSquadSignals}
@@ -2475,6 +2491,8 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   }
   
   const result = { summary, emailSent, emailErrorMsg, emailMessageId, lastRunAt: new Date().toISOString(), dateStr, success: true, createdTasks, sourceFailures };
+  // Zustand erst nach vollständigem Lauf speichern, damit ein Abbruch nichts als "gesehen" markiert.
+  try { saveDailyState(nextDailyState); } catch (stateErr: any) { console.warn('[Daily State] nicht gespeichert:', stateErr?.message || stateErr); }
   saveCronStatus(result);
   return result;
 }
