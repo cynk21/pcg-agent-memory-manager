@@ -1,12 +1,13 @@
 import { google } from 'googleapis';
+import { DAILY_LOOKBACK_DAYS } from './daily-window.ts';
 
 type RecordEvidence = (inputs: any[]) => void;
 
 export async function fetchUpcomingEvents(auth: any, recordEvidence: RecordEvidence, createCalendarClient = (value: any) => google.calendar({ version: 'v3', auth: value })) {
   try {
     const calendar = createCalendarClient(auth);
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - DAILY_LOOKBACK_DAYS);
     const fourteenDaysAhead = new Date();
     fourteenDaysAhead.setDate(fourteenDaysAhead.getDate() + 14);
 
@@ -15,7 +16,7 @@ export async function fetchUpcomingEvents(auth: any, recordEvidence: RecordEvide
     do {
       const page = await calendar.events.list({
         calendarId: 'primary',
-        timeMin: sevenDaysAgo.toISOString(),
+        timeMin: threeDaysAgo.toISOString(),
         timeMax: fourteenDaysAhead.toISOString(),
         maxResults: 2500,
         pageToken,
