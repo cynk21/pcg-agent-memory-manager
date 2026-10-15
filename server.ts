@@ -2765,7 +2765,8 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
     
     if (emailAddress) {
       const cleanEmailContent = cleanContentForEmail(summary);
-      const utf8Subject = `=?utf-8?B?${Buffer.from(`PCG Agent Daily Briefing - ${dateStr}`).toString('base64')}?=`;
+      const sourceStatus = `WhatsApp ${whatsAppAuthBroken ? 'FEHLT' : 'OK'}`;
+      const utf8Subject = `=?utf-8?B?${Buffer.from(`PCG Agent Daily Briefing - ${dateStr} (${sourceStatus})`).toString('base64')}?=`;
       const encodedBody = Buffer.from(cleanEmailContent, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
       const messageParts = [
         `From: ${emailAddress}`,
