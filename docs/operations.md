@@ -64,12 +64,12 @@ Das Bundle folgt OKF v0.2: `index.md` beschreibt den Bestand, `log.md` dokumenti
 npm run agent -- evidence-search "Orderbird" [--source drive|gmail|calendar|chat|tasks] [--limit 5]
 
 # 2. Temporale Fakten verwalten (inkl. automatischer Widerspruchs-Invalidierung)
-npm run agent -- fact-upsert -- --subject "Mario Pasculli" --predicate "availability" --object "medical_leave" --source-url "https://chat.google.com/..."
-npm run agent -- fact-timeline ["Mario Pasculli"] [--all]
+npm run agent -- fact-upsert -- --subject "<Name aus Quelle>" --predicate "availability" --object "medical_leave" --source-url "https://chat.google.com/..."
+npm run agent -- fact-timeline ["<Name aus Quelle>"] [--all]
 
 # 3. Entscheidungsgedächtnis (Decision Memory)
-npm run agent -- decision-record -- --title "K&B Modellwahl" --decision "Gemini 2.5 Flash aktiv nutzen" --rationale "Kostenfaktor" --project "Koenig & Bauer" --alts "Gemini 3.7 Flash,Claude" --owner "Hardy Engwer" --tags "ai-model,kosten"
-npm run agent -- decision-search "Kostenfaktor" [--project "Koenig & Bauer"]
+npm run agent -- decision-record -- --title "<Entscheidungstitel>" --decision "<Entscheidung>" --rationale "<Begründung>" --project "<Projektname aus Quelle>" --alts "<Alternative 1>,<Alternative 2>" --owner "Hardy Engwer" --tags "<tag1>,<tag2>"
+npm run agent -- decision-search "<Suchbegriff>" [--project "<Projektname aus Quelle>"]
 ```
 
 ## Windows Task Scheduler
