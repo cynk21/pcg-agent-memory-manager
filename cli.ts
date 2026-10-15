@@ -483,7 +483,7 @@ Antworte NUR mit dem <ACTION>-Block, kein Text drumherum.`;
       }
       case 'daily': {
         const result = await performDailyUpdate(token, true, { autoCreateTasks: true });
-        const proactiveMsg = await generateDailyChatProactiveMessage(result.summary, result.createdTasks);
+        const proactiveMsg = await generateDailyChatProactiveMessage(result.summary, result.createdTasks, result);
         return proactiveMsg;
       }
       case 'weekly': {
@@ -866,7 +866,7 @@ async function cmdDaily() {
   if (process.env.CHAT_SPACE_ID) {
     try {
       const chat = google.chat({ version: 'v1', auth: getOAuth2Client(accessToken) });
-      const proactiveMsg = await generateDailyChatProactiveMessage(result.summary, result.createdTasks);
+      const proactiveMsg = await generateDailyChatProactiveMessage(result.summary, result.createdTasks, result);
       const chunks = splitChatMessage(cleanContentForEmail(proactiveMsg));
       for (const [index, chunk] of chunks.entries()) {
         await chat.spaces.messages.create({
@@ -1152,7 +1152,7 @@ function extractDailyTodoSection(summary: string): string {
   return combined || '## Handlungsempfehlungen\n\nKeine aktuellen To-Dos gefunden.';
 }
 
-function buildFallbackProactiveMessage(todoSection: string, createdTasks: { title: string; id?: string; error?: string }[] = []): string {
+function buildFallbackProactiveMessage(todoSection: string, createdTasks: { title: string; id?: string; error?: string }[] = [], problemHeader: string = ''): string {
   const taskTitles = createdTasks.filter(t => !t.error).map(t => t.title);
   const items: string[] = [];
 
@@ -1171,10 +1171,16 @@ function buildFallbackProactiveMessage(todoSection: string, createdTasks: { titl
     ? `\n\n🤖 **Konkrete Unterstützungsvorschläge:**\n${items.join('\n\n')}`
     : '\n\n🤖 **Wie kann ich dich heute unterstützen?** Antworte einfach direkt hier im Chat mit deinem Auftrag (z. B. Doc erstellen, Mail entwerfen, Termin eintragen).';
 
-  return `☀️ **Daily To-Dos & Assistenz-Vorschläge**\n\n${todoSection}${suggestionsBlock}\n\n💬 *Antworte einfach direkt im Chat mit der Nummer oder der gewünschten Aktion!*`;
+  return `${problemHeader}☀️ **Daily To-Dos & Assistenz-Vorschläge**\n\n${todoSection}${suggestionsBlock}\n\n💬 *Antworte einfach direkt im Chat mit der Nummer oder der gewünschten Aktion!*`;
 }
 
-async function generateDailyChatProactiveMessage(summary: string, createdTasks: { title: string; id?: string; error?: string }[] = []): Promise<string> {
+async function generateDailyChatProactiveMessage(summary: string, createdTasks: { title: string; id?: string; error?: string }[] = [], problems: { sourceFailures?: string[]; emailErrorMsg?: string | null; emailSent?: boolean } = {}): Promise<string> {
+  const problemLines: string[] = [];
+  for (const failure of problems.sourceFailures ?? []) problemLines.push(`- Quelle fehlt: ${failure}`);
+  if (problems.emailSent === false && problems.emailErrorMsg) problemLines.push(`- E-Mail nicht gesendet: ${problems.emailErrorMsg}`);
+  const problemHeader = problemLines.length > 0
+    ? `⚠️ **Dieser Lauf war unvollständig:**\n${problemLines.join('\n')}\n\n`
+    : '';
   const todoSection = extractDailyTodoSection(summary);
   const taskList = createdTasks.length > 0
     ? createdTasks.map(t => `- [ ] ${t.title}`).join('\n')
@@ -1219,10 +1225,10 @@ ${taskList}`;
     if (text && (text.includes('Unterstützungsvorschläge') || text.includes('Vorschlag') || text.includes('Soll ich'))) {
       return text;
     }
-    return buildFallbackProactiveMessage(todoSection, createdTasks);
+    return buildFallbackProactiveMessage(todoSection, createdTasks, problemHeader);
   } catch (err: any) {
     console.warn('Fehler bei der Generierung des proaktiven Chat-Briefings:', err?.message || err);
-    return buildFallbackProactiveMessage(todoSection, createdTasks);
+    return buildFallbackProactiveMessage(todoSection, createdTasks, problemHeader);
   }
 }
 

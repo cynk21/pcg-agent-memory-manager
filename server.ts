@@ -2123,6 +2123,23 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
   // bringt den Prozess auf Windows zum Absturz (Exit 0xC0000142). Daher sequenziell danach.
   const whatsAppContext = await fetchWhatsAppMessages(recordVerbatimEvidence, DAILY_LOOKBACK_DAYS);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
+  // Kurze Fehlerliste aller Quellen für die Chat-Meldung (vor den KI-Vorschlägen).
+  const sourceFailures: string[] = [];
+  const failurePattern = /^\((?:[^)]*?)(nicht angemeldet|nicht konfiguriert|Authentifizierung abgelaufen|gesperrt|Initialisierungsfehler|Zeitüberschreitung|nicht geladen|nicht erreichbar|Fehler|fehlgeschlagen|notice)/i;
+  const sourceChecks: [string, string | undefined][] = [
+    ['Telegram', telegramContext],
+    ['WhatsApp', whatsAppContext],
+    ['Drive', driveContext],
+    ['Gmail', emailsContext],
+    ['Kalender', eventsContext],
+    ['Google Chat', chatsContext],
+    ['Google Tasks', tasksContext],
+  ];
+  for (const [name, ctx] of sourceChecks) {
+    if (typeof ctx === 'string' && failurePattern.test(ctx.trim())) {
+      sourceFailures.push(`${name}: ${ctx.trim().slice(0, 160)}`);
+    }
+  }
   // Telegram-Session-Probleme dürfen nicht still untergehen: gut sichtbarer Hinweis im Briefing.
   const telegramAuthBroken = /Telegram (nicht angemeldet|Authentifizierung abgelaufen)/i.test(telegramContext);
   const telegramWarningBlock = telegramAuthBroken
@@ -2452,7 +2469,7 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
     // Continue even if email fails, so we don't break the whole process if only email failed
   }
   
-  const result = { summary, emailSent, emailErrorMsg, emailMessageId, lastRunAt: new Date().toISOString(), dateStr, success: true, createdTasks };
+  const result = { summary, emailSent, emailErrorMsg, emailMessageId, lastRunAt: new Date().toISOString(), dateStr, success: true, createdTasks, sourceFailures };
   saveCronStatus(result);
   return result;
 }
