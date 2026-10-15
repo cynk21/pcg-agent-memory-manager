@@ -5,14 +5,14 @@ type RecordEvidence = (inputs: any[]) => void;
 export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidence, createGmailClient = (value: any) => google.gmail({ version: 'v1', auth: value })) {
   try {
     const gmail = createGmailClient(auth);
-    const res = await gmail.users.messages.list({ userId: 'me', q: 'newer_than:45d -in:trash -in:spam', maxResults: 60, includeSpamTrash: false });
+    const res = await gmail.users.messages.list({ userId: 'me', q: 'newer_than:3d -in:trash -in:spam', maxResults: 60, includeSpamTrash: false });
     const messages = res.data.messages || [];
     // Gesendete Mails gezielt mitnehmen, damit bereits erledigte Follow-ups erkannt werden.
     let sentMessages: any[] = [];
     try {
       const sentRes = await gmail.users.messages.list({
         userId: 'me',
-        q: 'in:sent newer_than:45d -in:trash -in:spam',
+        q: 'in:sent newer_than:3d -in:trash -in:spam',
         maxResults: 60,
         includeSpamTrash: false,
       });
@@ -24,7 +24,7 @@ export async function fetchRecentEmails(auth: any, recordEvidence: RecordEvidenc
     try {
       const targetedRes = await gmail.users.messages.list({
         userId: 'me',
-        q: 'newer_than:45d -in:trash -in:spam (transcript OR transkript OR "meeting notes" OR protokoll OR summary OR zusammenfassung OR "action items" OR todo OR to-do OR aufgabe OR projekt OR zugewiesen OR "next steps" OR handover OR scoping OR proposal OR sow OR "statement of work" OR "use case" OR "use cases" OR review OR retrospective OR alignment OR sync OR briefing OR absprache OR "PK" OR "Einarbeitung" OR "Einarbeitungsplan" OR "Onboarding" OR "Mitarbeiter" OR "Joiner" OR "Welcome" OR "Schulung" OR "Regionalbudget" OR "Ortsbeirat" OR "Ratssitzung" OR "Protokoll")',
+        q: 'newer_than:3d -in:trash -in:spam (transcript OR transkript OR "meeting notes" OR protokoll OR summary OR zusammenfassung OR "action items" OR todo OR to-do OR aufgabe OR projekt OR zugewiesen OR "next steps" OR handover OR scoping OR proposal OR sow OR "statement of work" OR "use case" OR "use cases" OR review OR retrospective OR alignment OR sync OR briefing OR absprache OR "PK" OR "Einarbeitung" OR "Einarbeitungsplan" OR "Onboarding" OR "Mitarbeiter" OR "Joiner" OR "Welcome" OR "Schulung" OR "Regionalbudget" OR "Ortsbeirat" OR "Ratssitzung" OR "Protokoll")',
         maxResults: 50,
         includeSpamTrash: false,
       });

@@ -16,6 +16,7 @@ import { fetchRecentEmails } from './src/server/gmail-reader.ts';
 import { fetchTasks } from './src/server/tasks-reader.ts';
 import { fetchTelegramGroupMessages } from './src/server/telegram-reader.ts';
 import { fetchWhatsAppMessages } from './src/server/whatsapp-reader.ts';
+import { DAILY_LOOKBACK_DAYS } from './src/server/daily-window.ts';
 import { getFileContent, listAllFiles } from './src/server/drive-reader.ts';
 import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readDriveKnowledgeBaseContext } from './src/server/drive-context.ts';
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
@@ -2109,17 +2110,18 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     eventsContext,
     chatsContext,
     telegramContext,
-    whatsAppContext,
     tasksContext
   ] = await Promise.all([
     fetchDriveContext(accessToken),
     fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
-    fetchTelegramGroupMessages(recordVerbatimEvidence, 7),
-    fetchWhatsAppMessages(recordVerbatimEvidence, 7),
+    fetchTelegramGroupMessages(recordVerbatimEvidence, DAILY_LOOKBACK_DAYS),
     fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
+  // WhatsApp (Chrome/Puppeteer) bewusst NICHT parallel zu Telegram (gramJS): paralleler Start
+  // bringt den Prozess auf Windows zum Absturz (Exit 0xC0000142). Daher sequenziell danach.
+  const whatsAppContext = await fetchWhatsAppMessages(recordVerbatimEvidence, DAILY_LOOKBACK_DAYS);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
   // Telegram-Session-Probleme dürfen nicht still untergehen: gut sichtbarer Hinweis im Briefing.
   const telegramAuthBroken = /Telegram (nicht angemeldet|Authentifizierung abgelaufen)/i.test(telegramContext);
@@ -2472,7 +2474,7 @@ export async function performWeeklyReview(accessToken: string) {
     fetchRecentEmails(oauth2Client, recordVerbatimEvidence),
     fetchUpcomingEvents(oauth2Client, recordVerbatimEvidence),
     fetchRecentChats(oauth2Client, recordVerbatimEvidence),
-    fetchTelegramGroupMessages(recordVerbatimEvidence, 7),
+    fetchTelegramGroupMessages(recordVerbatimEvidence, DAILY_LOOKBACK_DAYS),
     fetchTasks(oauth2Client, recordVerbatimEvidence)
   ]);
   const enrichedDriveContext = enrichTimestampTranscriptLinks(driveContext, eventsContext);
