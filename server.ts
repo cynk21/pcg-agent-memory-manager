@@ -1,10 +1,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
-import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import cron from 'node-cron';
 import 'dotenv/config';
@@ -24,17 +22,19 @@ import { enrichTimestampTranscriptLinks, fetchDriveKnowledgeBaseContext as readD
 import { getEffectiveApiConfig, getModelName, isValidApiKey, loadAISettings, normalizeAiBaseUrl, saveAISettings } from './src/server/ai-config.ts';
 import { recordVerbatimEvidence } from './src/server/evidence.ts';
 import { validateTextField } from './src/server/input-validation.ts';
-import { buildEvidencePacket } from './src/server/evidence-packet.ts';
-import { callRemoteMcpTool, getConfiguredRemoteMcpServerAsync } from './src/server/remote-mcp.ts';
 import { normalizeTaskComparisonText, areTaskTextsSimilar, extractGoogleTaskStates, removeCompletedTaskRecommendations, removeStaleNextStepsFromProjectStatus, removeDuplicateSectionItems, ensureCriticalProjectTasks, findNearestSourceUrl, buildShortTaskNotes, ensureMeetingProtocolTasks, ensureActionSectionTasks } from './src/server/action-reconciliation.ts';
 import { getGenAIClient, callOpenAICompatibleGateway, generateGeminiContentWithTimeout } from './src/server/llm-gateway.ts';
-export { normalizeTaskComparisonText, areTaskTextsSimilar, extractGoogleTaskStates, removeCompletedTaskRecommendations, removeStaleNextStepsFromProjectStatus, removeDuplicateSectionItems, ensureCriticalProjectTasks, findNearestSourceUrl, buildShortTaskNotes };
+export { normalizeTaskComparisonText, areTaskTextsSimilar, extractGoogleTaskStates, removeCompletedTaskRecommendations, removeStaleNextStepsFromProjectStatus, removeDuplicateSectionItems, ensureCriticalProjectTasks, findNearestSourceUrl, buildShortTaskNotes, ensureMeetingProtocolTasks, ensureActionSectionTasks };
 
 export { fetchTasks };
 
 export { fetchRecentEmails };
 
 export { fetchRecentChats };
+
+export { fetchTelegramGroupMessages };
+
+export { fetchWhatsAppMessages };
 
 export { fetchUpcomingEvents };
 
@@ -60,28 +60,8 @@ app.use('/api', createApiAuthMiddleware({
 
 const TOKEN_FILE = path.join(process.cwd(), '.latest_token.json');
 const CRON_STATUS_FILE = path.join(process.cwd(), '.last_cron_status.json');
-const CHAT_PENDING_PROPOSALS_FILE = path.join(process.cwd(), '.chat-pending-proposals.json');
-const DAILY_SOURCE_SNAPSHOT_FILE = path.join(process.cwd(), '.daily-source-snapshot.json');
-const CHAT_MARKER = '[PCG-Agent]';
 
 let latestAccessToken: string | null = null;
-
-function dailySourceDigest(input: { drive: string; emails: string; events: string; chats: string; tasks: string }): string {
-  return crypto.createHash('sha256').update(JSON.stringify(input), 'utf8').digest('hex');
-}
-
-function hasDailySourceChanged(digest: string): boolean {
-  try {
-    const snapshot = JSON.parse(fs.readFileSync(DAILY_SOURCE_SNAPSHOT_FILE, 'utf8')) as { digest?: string };
-    return snapshot.digest !== digest;
-  } catch {
-    return true;
-  }
-}
-
-function saveDailySourceDigest(digest: string): void {
-  fs.writeFileSync(DAILY_SOURCE_SNAPSHOT_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), digest }, null, 2), 'utf8');
-}
 
 export class GoogleAuthError extends Error {
   constructor(message = "Google API-Authentifizierung abgelaufen. Bitte neu anmelden.") {
@@ -221,139 +201,6 @@ export function saveCronStatus(statusData: any) {
   }
 }
 
-function convertToOpenAIMessages(contents: any, systemInstruction?: any): any[] {
-  const messages: any[] = [];
-  if (systemInstruction) {
-    let sysText = '';
-    if (typeof systemInstruction === 'string') {
-      sysText = systemInstruction;
-    } else if (systemInstruction.parts && Array.isArray(systemInstruction.parts)) {
-      sysText = systemInstruction.parts.map((p: any) => p.text || (typeof p === 'string' ? p : '')).join('\n');
-    } else if (systemInstruction.text) {
-      sysText = systemInstruction.text;
-    }
-    if (sysText.trim() !== '') {
-      messages.push({ role: 'system', content: sysText.trim() });
-    }
-  }
-
-  if (typeof contents === 'string') {
-    messages.push({ role: 'user', content: contents });
-  } else if (Array.isArray(contents)) {
-    for (const item of contents) {
-      if (typeof item === 'string') {
-        messages.push({ role: 'user', content: item });
-      } else if (item && typeof item === 'object') {
-        const role = item.role === 'model' || item.role === 'assistant' ? 'assistant' : (item.role === 'system' ? 'system' : 'user');
-        let text = '';
-        if (typeof item.content === 'string') {
-          text = item.content;
-        } else if (Array.isArray(item.parts)) {
-          text = item.parts.map((p: any) => p.text || (typeof p === 'string' ? p : '')).join('\n');
-        } else if (item.text) {
-          text = item.text;
-        }
-        if (text) {
-          messages.push({ role, content: text });
-        }
-      }
-    }
-  } else if (contents && typeof contents === 'object') {
-    const role = contents.role === 'model' || contents.role === 'assistant' ? 'assistant' : (contents.role === 'system' ? 'system' : 'user');
-    let text = '';
-    if (typeof contents.content === 'string') {
-      text = contents.content;
-    } else if (Array.isArray(contents.parts)) {
-      text = contents.parts.map((p: any) => p.text || (typeof p === 'string' ? p : '')).join('\n');
-    } else if (contents.text) {
-      text = contents.text;
-    }
-    if (text) {
-      messages.push({ role, content: text });
-    }
-  }
-
-  if (messages.length === 0) {
-    messages.push({ role: 'user', content: 'Hallo' });
-  }
-
-  return messages;
-}
-
-function getGenAIClient(customApiKey?: string, customBaseUrl?: string): GoogleGenAI {
-  const { apiKey, baseUrl } = getEffectiveApiConfig(customApiKey, customBaseUrl);
-  const options: any = { apiKey: apiKey || '' };
-  if (baseUrl) {
-    options.httpOptions = { baseUrl };
-  }
-  return new GoogleGenAI(options);
-}
-
-async function callOpenAICompatibleGateway(options: {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-  contents: any;
-  config?: any;
-}): Promise<{ text?: string }> {
-  let endpoint = options.baseUrl;
-  if (endpoint.endsWith('/v1')) {
-    endpoint = `${endpoint}/chat/completions`;
-  } else if (endpoint.endsWith('/v1/')) {
-    endpoint = `${endpoint}chat/completions`;
-  } else {
-    endpoint = `${endpoint}/v1/chat/completions`;
-  }
-
-  const messages = convertToOpenAIMessages(options.contents, options.config?.systemInstruction);
-  const body: any = {
-    model: options.model,
-    messages
-  };
-
-  if (options.config?.responseMimeType === 'application/json') {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 300000);
-  let res: Response;
-  try {
-    res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${options.apiKey}`
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  const textRes = await res.text();
-  let jsonRes: any = {};
-  try {
-    jsonRes = JSON.parse(textRes);
-  } catch {
-    if (!res.ok) {
-      throw new Error(`Gateway Error (${res.status}): ${textRes}`);
-    }
-  }
-
-  if (!res.ok || jsonRes.error) {
-    const errorMsg = jsonRes.error?.message || jsonRes.error || textRes || `HTTP ${res.status}`;
-    const err = new Error(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
-    (err as any).status = res.status;
-    (err as any).data = jsonRes;
-    throw err;
-  }
-
-  const choiceContent = jsonRes.choices?.[0]?.message?.content || '';
-  return { text: choiceContent };
-}
-
 export async function generateAIContent(options: {
   contents: any;
   config?: any;
@@ -373,13 +220,13 @@ export async function generateAIContent(options: {
   if (isGateway) {
     const gatewayCandidates = [
       targetModel,
-      'Standard',
       'gemini-3.8-flash',
+      'Standard',
       'Pro',
       'Expert',
       'gemini-3.5-flash',
+      'gemini-3.7-flash',
       'pcg-auto-pro',
-      'gemini-2.5-pro',
       'claude-sonnet-5',
       'gpt-5.4',
       'gpt-auto-pro'
@@ -430,7 +277,7 @@ export async function generateAIContent(options: {
     const isInvalidModel = fullStr.includes('Invalid model name passed in model=') || fullStr.includes('invalid model') || fullStr.includes('not found') || err?.status === 404;
     const isQuotaError = err?.status === 429 || err?.code === 429 || fullStr.includes('quota') || fullStr.includes('Quota') || fullStr.includes('RESOURCE_EXHAUSTED');
     const isUnavailable = err?.status === 503 || err?.code === 503 || fullStr.includes('503') || fullStr.includes('UNAVAILABLE') || fullStr.includes('high demand');
-    const isNetworkError = fullStr.includes('fetch failed') || fullStr.includes('ECONNRESET') || fullStr.includes('ETIMEDOUT') || fullStr.includes('timed out') || fullStr.includes('aborted') || err?.name === 'AbortError';
+    const isNetworkError = fullStr.includes('fetch failed') || fullStr.includes('ECONNRESET') || fullStr.includes('ETIMEDOUT') || fullStr.includes('timed out');
 
     if (isAccessDenied || isInvalidModel || isQuotaError || isUnavailable || isNetworkError) {
       if (isQuotaError) {
@@ -465,20 +312,6 @@ export async function generateAIContent(options: {
       }
     }
     throw err;
-  }
-}
-
-async function generateGeminiContentWithTimeout(ai: any, request: any, timeoutMs = 300000): Promise<any> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      ai.models.generateContent(request),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Gemini request timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 
@@ -629,12 +462,7 @@ app.post('/api/token-sync', (req, res) => {
   return res.json({ success: true, message: "Token erfolgreich synchronisiert." });
 });
 
-export const driveFolderId = '1YK8hW4LWtZdmLW-hLcs9fFX_jFz3teOB';
-export const driveMeetRecordingsFolderId = '1iX0fNTKFoF-LPeu2LFGIhFzgEKfj8Lws';
-export const driveTranscriptFolderId = '1Hk053rZZhE720Ri5uVdGPwYOYQ36tpHT';
-const CONFLUENCE_MEMORY_PARENT_ID = '1859256702';
-const CONFLUENCE_MEMORY_CLOUD_ID = 'e1fc84dd-5e15-41d8-b1a3-4b9038636cae';
-const CONFLUENCE_MEMORY_SPACE_ID = '~71202086e31aeb26de405a845989f5cda2a392';
+export const driveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.DRIVE_FOLDER_ID || '';
 
 export function getOAuth2Client(accessToken: string) {
   const oauth2Client = new google.auth.OAuth2();
@@ -647,7 +475,7 @@ export async function getDriveClient(accessToken: string) {
 }
 
 function fetchDriveContext(accessToken: string) {
-  return readDriveKnowledgeBaseContext(accessToken, [driveFolderId, driveMeetRecordingsFolderId, driveTranscriptFolderId], {
+  return readDriveKnowledgeBaseContext(accessToken, driveFolderId || 'root', {
     getDriveClient,
     listAllFiles,
     getFileContent,
@@ -670,7 +498,6 @@ export function extractDavidOneOnOneAgenda(tasksContext?: string): string {
     : '--- BESONDERE AGENDA-QUELLE: BESPRECHUNG DAVID ---\nKeine offene Aufgabe "Besprechung David" gefunden.';
 }
 
-// Function to recursively list files in the knowledge base folder
 export function loadLocalMemoryContext(): string {
   try {
     const memDir = path.join(process.cwd(), 'agent-memory');
@@ -697,7 +524,8 @@ const AVAILABLE_SKILLS: Record<string, string> = {
   'david-one-on-one-preparation': 'david-one-on-one-preparation.md',
   'daily-management-briefing': 'daily-management-briefing.md',
   'project-and-customer-status': 'project-and-customer-status.md',
-  'squad-lead-operations': 'squad-lead-operations.md',
+  'ortsbeirat-operations': 'ortsbeirat-operations.md',
+  'brg-erzmarschall-operations': 'brg-erzmarschall-operations.md',
   'chat-command-safety': 'chat-command-safety.md',
 };
 
@@ -716,17 +544,23 @@ export function loadSkillContext(skillNames: string[]): string {
 
 export async function syncLocalMemoryToDrive(accessToken: string): Promise<string[]> {
   const memDir = path.join(process.cwd(), 'agent-memory');
-  if (!fs.existsSync(memDir)) return [];
+  if (!fs.existsSync(memDir) || !driveFolderId) return [];
 
   const drive = await getDriveClient(accessToken);
   const syncedFiles: string[] = [];
 
   const syncDirectory = async (localDir: string, parentId: string, relativeDir: string): Promise<void> => {
-    const filesRes = await drive.files.list({
-      q: `'${parentId}' in parents and trashed=false`,
-      fields: 'files(id,name,mimeType)',
-      pageSize: 100,
-    });
+    let filesRes: any;
+    try {
+      filesRes = await drive.files.list({
+        q: `'${parentId}' in parents and trashed=false`,
+        fields: 'files(id,name,mimeType)',
+        pageSize: 100,
+      });
+    } catch (listErr: any) {
+      console.warn(`[Memory Sync] Ordner "${parentId}" nicht erreichbar (${listErr?.message || listErr}). Überspringe Sync für dieses Verzeichnis.`);
+      return;
+    }
     const existingFiles = new Map<string, { id: string; mimeType?: string }>();
     for (const file of filesRes.data.files || []) {
       if (file.id && file.name) existingFiles.set(file.name, { id: file.id, mimeType: file.mimeType });
@@ -740,11 +574,16 @@ export async function syncLocalMemoryToDrive(accessToken: string): Promise<strin
       if (entry.isDirectory()) {
         let folderId = existingFiles.get(entry.name)?.id;
         if (!folderId) {
-          const folder = await drive.files.create({
-            requestBody: { name: entry.name, parents: [parentId], mimeType: 'application/vnd.google-apps.folder' },
-            fields: 'id',
-          });
-          folderId = folder.data.id || '';
+          try {
+            const folder = await drive.files.create({
+              requestBody: { name: entry.name, parents: [parentId], mimeType: 'application/vnd.google-apps.folder' },
+              fields: 'id',
+            });
+            folderId = folder.data.id || '';
+          } catch (createFolderErr: any) {
+            console.warn(`[Memory Sync] Unterordner "${entry.name}" konnte in "${parentId}" nicht erstellt werden:`, createFolderErr?.message || createFolderErr);
+            continue;
+          }
         }
         if (folderId) await syncDirectory(localPath, folderId, relativePath);
         continue;
@@ -756,16 +595,24 @@ export async function syncLocalMemoryToDrive(accessToken: string): Promise<strin
       const media = { mimeType, body };
       const fileId = existingFiles.get(entry.name)?.id;
 
-      if (fileId) {
-        await drive.files.update({ fileId, media });
-      } else {
-        await drive.files.create({ requestBody: { name: entry.name, parents: [parentId], mimeType }, media });
+      try {
+        if (fileId) {
+          await drive.files.update({ fileId, media });
+        } else {
+          await drive.files.create({ requestBody: { name: entry.name, parents: [parentId], mimeType }, media });
+        }
+        syncedFiles.push(relativePath);
+      } catch (fileSyncErr: any) {
+        console.warn(`[Memory Sync] Datei "${entry.name}" konnte nicht synchronisiert werden:`, fileSyncErr?.message || fileSyncErr);
       }
-      syncedFiles.push(relativePath);
     }
   };
 
-  await syncDirectory(memDir, driveFolderId, '');
+  try {
+    await syncDirectory(memDir, driveFolderId, '');
+  } catch (err: any) {
+    console.warn(`[Memory Sync] Fehler beim Synchronisieren nach Drive:`, err?.message || err);
+  }
   return syncedFiles;
 }
 
@@ -852,9 +699,6 @@ function renderStructuredMemoryConcept(concept: StructuredMemoryConcept, generat
     `description: ${clean(concept.description || concept.title)}`,
     `tags: [${tags.join(', ')}]`,
     `status: ${concept.status || 'stable'}`,
-    `memory_category: ${concept.category}`,
-    `updated_at: ${generatedAt}`,
-    `source_count: ${sources.length}`,
     `generated: { by: process:pcg-agent-memory-manager, at: ${generatedAt} }`,
     `verified: { by: process:pcg-agent-memory-manager, at: ${generatedAt} }`,
   ];
@@ -1045,7 +889,8 @@ export async function generateStructuredMemoryConcepts(input: {
     'workspace-context-ingestion',
     'task-state-reconciliation',
     'project-and-customer-status',
-    'squad-lead-operations',
+    'ortsbeirat-operations',
+    'brg-erzmarschall-operations',
   ]);
   const response = await generateAIContent({
     contents: `Erzeuge aus dem folgenden Workspace-Kontext ein kuratiertes OKF-v0.2-Memory. Gib ausschließlich valides JSON als Array zurück.
@@ -1059,6 +904,7 @@ Jedes Element muss diese Form haben:
 Regeln:
 - Erzeuge nur dauerhaft nützliche Konzepte, maximal 20.
 - Trenne strikt: Projekte nach projects/, Kundenthemen nach customers/, Squad-/Teamthemen nach squad/, allgemeine Regeln nach general/.
+- Ignoriere private Coaching-/Mentoring-Themen (wie Coaching J.) komplett; erstelle dafür keine Konzepte in agent-memory.
 - Keine erledigten Aufgaben als offen darstellen. Google Tasks mit [ERLEDIGT] sind endgültig erledigt; [OFFEN] bleibt aktiv.
 - Keine neuen Aufgaben erfinden. Dokumentiere offene Aufgaben nur, wenn sie aus den Quellen stammen.
 - Bevorzuge aktuelle, wiederverwendbare Fakten gegenüber einem Tagesbericht.
@@ -1122,8 +968,8 @@ function extractCurrentSquadSignals(driveContext: string, chatsContext: string):
   const relevantBlocks = currentSourceBlocks.filter(block => /auslastung|kapazität|neue[nr]?\s+projekte|staffing|resource planner|billability|allocation/i.test(block));
   const chatLines = chatsContext.split(/\r?\n/).filter(line => /auslastung|kapazität|neue[nr]?\s+projekte|staffing|resource planner|billability|allocation/i.test(line));
   const signals = [
-    ...relevantBlocks.slice(0, 3).map(block => block.slice(0, 1600)),
-    chatLines.slice(0, 25).join('\n'),
+    ...relevantBlocks.slice(0, 4).map(block => block.slice(0, 2000)),
+    chatLines.slice(0, 40).join('\n'),
   ].filter(Boolean).join('\n\n');
   return signals || '(Keine aktuelle datierte Squad-Auslastungsquelle gefunden.)';
 }
@@ -1135,25 +981,13 @@ export function extractProjectCapacityEvidence(driveContext: string, emailsConte
   const sourceBlocks = driveBlocks
     .filter(block => !/(?:^|\s)(?:projects|customers|squad|general)\/[^\s"|]+\.md/i.test(block))
     .filter(block => evidencePattern.test(block))
-    .slice(0, 6)
-    .map(block => block.slice(0, 1800));
+    .slice(0, 15)
+    .map(block => block.slice(0, 2500));
   const messageLines = `${emailsContext}\n${chatsContext}`
     .split(/\r?\n/)
     .filter(line => evidencePattern.test(line))
-    .slice(0, 40);
+    .slice(0, 100);
   return [...sourceBlocks, messageLines.join('\n')].filter(Boolean).join('\n\n') || '(Keine projekt- oder kapazitätsbezogenen Quellen gefunden.)';
-}
-
-function compactEvidenceForDaily(context: string, maxCharsPerBlock = 4200): string {
-  if (!context || context.length <= 120000) return context;
-  const blocks = context.match(/--- [^\n]+[\s\S]*?(?=\n--- |$)/g);
-  if (!blocks?.length) return `${context.slice(0, 70000)}\n...[Evidence gekürzt]\n${context.slice(-50000)}`;
-  return blocks.map(block => {
-    if (/EXTERNE PLAYBOOK|REGELQUELLE|LOKALES MEMORY/i.test(block)) return block;
-    if (block.length <= maxCharsPerBlock) return block;
-    const actionLines = block.split(/\r?\n/).filter(line => /hardy|nächste schritte|next steps|action|todo|aufgabe|offen|entscheidung|vorbereit|owner|fällig/i.test(line)).join('\n');
-    return `${block.slice(0, 1200)}\n...[Mitte im Daily-Prompt gekürzt; Quelle vollständig gelesen]\n${actionLines.slice(0, 1400)}\n${block.slice(-1500)}`;
-  }).join('\n\n');
 }
 
 export function sanitizeCurrentSquadCapacityClaims(text: string, currentSquadSignals: string): string {
@@ -1185,7 +1019,7 @@ function titleFromMemoryPath(value: string): string {
 export function validateDailyBriefingStructure(text: string): string {
   const expectedSections = [
     '## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen',
-    '## 2. Squad Lead Control',
+    '## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)',
     '## 3. 🚨 Proaktive Kunden- & Meeting-Vorbereitung',
     '## 4. 🔮 Vorausschau & Wochenausblick',
     '## 5. 🚨 Dringende Klärungen & Projekt-To-dos',
@@ -1213,94 +1047,10 @@ function applyCanonicalSpellingCorrections(text: string): string {
   return corrected;
 }
 
-function normalizeTaskComparisonText(value: string): string {
-  const stopWords = new Set([
-    'aber', 'als', 'am', 'an', 'auf', 'aus', 'bei', 'bis', 'das', 'den', 'der', 'die', 'ein', 'eine',
-    'fuer', 'für', 'im', 'in', 'ist', 'mit', 'nach', 'oder', 'und', 'von', 'vor', 'zu', 'zum', 'zur'
-  ]);
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/&/g, ' und ')
-    .replace(/[^a-z0-9äöüß]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(word => word.length > 1 && !stopWords.has(word))
-    .join(' ');
-}
 
-function areTaskTextsSimilar(first: string, second: string): boolean {
-  const a = normalizeTaskComparisonText(first);
-  const b = normalizeTaskComparisonText(second);
-  if (!a || !b) return false;
-  if (a === b) return true;
-  if (Math.min(a.length, b.length) >= 12 && (a.includes(b) || b.includes(a))) return true;
 
-  // Meeting notes often paraphrase an existing task (for example
-  // "Arpit: Buddy festlegen" vs. "Personio: Onboarding-To-dos Arpit prüfen").
-  const workflowWords = ['personio', 'onboarding', 'einarbeitung', 'buddy', 'diensthandy', 'hardware'];
-  const aWorkflow = workflowWords.some(word => a.includes(word));
-  const bWorkflow = workflowWords.some(word => b.includes(word));
-  const bAnchorWords = new Set(b.split(' '));
-  const anchors = [...new Set(a.split(' ').filter(word => word.length >= 4 && bAnchorWords.has(word)))];
-  if (aWorkflow && bWorkflow && anchors.length > 0) return true;
 
-  const aWords = new Set(a.split(' '));
-  const bWords = new Set(b.split(' '));
-  const common = [...aWords].filter(word => bWords.has(word)).length;
-  const smallerSize = Math.min(aWords.size, bWords.size);
-  if (smallerSize === 0) return false;
-  const overlap = common / smallerSize;
-  return (common >= 3 && overlap >= 0.5) || (common >= 2 && overlap >= 0.8);
-}
 
-function extractGoogleTaskStates(tasksContext?: string): { open: string[]; completed: string[] } {
-  const result = { open: [] as string[], completed: [] as string[] };
-  if (!tasksContext) return result;
-
-  for (const line of tasksContext.split('\n')) {
-    const match = line.match(/^- \[(OFFEN|ERLEDIGT)\] (.*?)(?= \|)/);
-    if (!match) continue;
-    (match[1] === 'OFFEN' ? result.open : result.completed).push(match[2].trim());
-  }
-  return result;
-}
-
-function removeCompletedTaskRecommendations(text: string, completedTitles: string[], openTitles: string[] = []): string {
-  if (completedTitles.length === 0) return text;
-  const sectionStart = text.search(/^## (?:4|5|6)\.\s/m);
-  if (sectionStart < 0) return text;
-
-  const actionStart = text.indexOf('<ACTION_PROPOSALS>', sectionStart);
-  const sectionEnd = actionStart >= 0 ? actionStart : text.length;
-  const before = text.slice(0, sectionStart);
-  const section = text.slice(sectionStart, sectionEnd).replace(
-    /^- \*\*([^*\n]+)\*\*[\s\S]*?(?=^- \*\*|$)/gm,
-    (block, title) => completedTitles.some(completed => areTaskTextsSimilar(title, completed)) &&
-       !openTitles.some(open => areTaskTextsSimilar(title, open)) ? '' : block
-  );
-  return before + section + text.slice(sectionEnd);
-}
-
-function removeStaleNextStepsFromProjectStatus(text: string, completedTitles: string[]): string {
-  if (completedTitles.length === 0) return text;
-  const sec2Start = text.search(/^## 2\.\s/m);
-  if (sec2Start < 0) return text;
-  const sec2End = text.search(/^## 3\.\s/m);
-  const section = text.slice(sec2Start, sec2End >= 0 ? sec2End : text.length);
-
-  const cleaned = section.replace(
-    /(\*\*Nächste Schritte:\*\*\s*)([^\n•]+)/gi,
-    (_match, prefix: string, body: string) => {
-      const sentences = body.split(/(?<=\.)\s+/).filter((s: string) => s.trim());
-      const kept = sentences.filter((s: string) => !completedTitles.some(c => areTaskTextsSimilar(s, c)));
-      return kept.length > 0 ? prefix + kept.join(' ') : '';
-    }
-  );
-
-  return text.slice(0, sec2Start) + cleaned + (sec2End >= 0 ? text.slice(sec2End) : '');
-}
 
 function applyAuthoritativeProjectCorrections(text: string): string {
   return text;
@@ -1362,9 +1112,10 @@ export function sanitizeActionProposals(text: string, tasksContext?: string, eve
           continue;
         }
 
-        // 2. FILTER OUT IGNORED INTERNAL MEETINGS (Thursdays for Data)
-        if (/thursdays?\s+(for|4)\s+data/i.test(titleLower) || /thursdays?\s+(for|4)\s+data/i.test(notesLower)) {
-          console.log(`[Ignored Meeting Filter] Removed proposal for Thursdays for Data: "${p.title}"`);
+        // 2. FILTER OUT IGNORED INTERNAL MEETINGS & COACHING (Thursdays for Data, Coaching / Mentoring J.)
+        if (/thursdays?\s+(for|4)\s+data/i.test(titleLower) || /thursdays?\s+(for|4)\s+data/i.test(notesLower) ||
+            /coaching|mentoring\s*j|schwingdings/i.test(titleLower) || /coaching|mentoring\s*j|schwingdings/i.test(notesLower)) {
+          console.log(`[Ignored Meeting Filter] Removed proposal for ignored topic: "${p.title}"`);
           modified = true;
           continue;
         }
@@ -1450,144 +1201,10 @@ export function sanitizeActionProposals(text: string, tasksContext?: string, eve
   return text;
 }
 
-function ensureCriticalProjectTasks(summary: string, sourceContext: string, tasksContext: string, dueDate: string): string {
-  const wireguardTitle = 'HHA: WireGuard-Zugang für Kundeninfrastruktur einrichten';
-  if (!/wireguard/i.test(sourceContext)) {
-    return summary;
-  }
 
-  const taskStates = extractGoogleTaskStates(tasksContext);
-  if ([...taskStates.open, ...taskStates.completed].some(task => areTaskTextsSimilar(wireguardTitle, task) || /wireguard|timo\s+dempwolf/i.test(task) || /public\s+keys?.*hha|hha.*public\s+keys?/i.test(task))) {
-    return summary;
-  }
 
-  const sourceLine = sourceContext.split('\n').find(line => /wireguard/i.test(line)) || 'Aktueller HHA-Kontext nennt persönliche WireGuard-Keys für den Kundeninfrastrukturzugang.';
-  const sourceUrl = sourceLine.match(/https?:\/\/[^\s|)]+/)?.[0] || 'https://tasks.google.com/';
-  const proposal = {
-    id: 'critical-wireguard',
-    type: 'task',
-    title: wireguardTitle,
-    details: {
-      title: wireguardTitle,
-      notes: `Beim Kunden Hamburger Hochbahn persönlichen WireGuard-Key über Timo Dempwolf einrichten lassen, damit der Zugriff auf GitLab/Kundeninfrastruktur für das HHA AI Gateway möglich ist. Quelle: ${sourceUrl}`,
-      dueDate,
-    },
-  };
-  const actionMatch = summary.match(/<ACTION_PROPOSALS>([\s\S]*?)<\/ACTION_PROPOSALS>/i);
-  if (actionMatch) {
-    const raw = actionMatch[1].trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    try {
-      const proposals = JSON.parse(raw);
-      if (Array.isArray(proposals)) {
-        if (proposals.some((proposal: any) => proposal?.type === 'task' && /wireguard|timo\s+dempwolf/i.test(`${proposal.title || ''} ${proposal.details?.title || ''} ${proposal.details?.notes || ''}`))) {
-          return summary;
-        }
-        proposals.push(proposal);
-        return summary.replace(actionMatch[0], `<ACTION_PROPOSALS>\n${JSON.stringify(proposals, null, 2)}\n</ACTION_PROPOSALS>`);
-      }
-    } catch {
-      // Fall through and append a clean proposal block.
-    }
-  }
-  return `${summary.trim()}\n\n<ACTION_PROPOSALS>\n${JSON.stringify([proposal], null, 2)}\n</ACTION_PROPOSALS>`;
-}
 
-export function ensureMeetingProtocolTasks(summary: string, sourceContext: string, tasksContext: string, dueDate: string): string {
-  const taskStates = extractGoogleTaskStates(tasksContext);
-  const actions: { title: string; notes: string }[] = [];
-  const actionPattern = /(?:^|\n)\s*(?:[*•-]\s*)?\[Hardy(?:\s+Engwer)?\]\s*([^:\n]+):\s*([^\n]*(?:\n(?!\s*(?:[*•-]\s*)?\[(?:Hardy|David|Die Gruppe)\])[^\n]*)*)/gi;
-  for (const match of sourceContext.matchAll(actionPattern)) {
-    const label = match[1].trim().replace(/\s+/g, ' ');
-    const notes = match[2].replace(/\s+/g, ' ').trim();
-    if (!label || !notes || /^(?:status|aktueller stand|zusammenfassung)$/i.test(label)) continue;
-    if (!actions.some(action => areTaskTextsSimilar(action.title, label))) actions.push({ title: label, notes });
-  }
-  if (actions.length === 0) return summary;
 
-  const existingTitles = [...taskStates.open, ...taskStates.completed];
-  const actionMatch = summary.match(/<ACTION_PROPOSALS>([\s\S]*?)<\/ACTION_PROPOSALS>/i);
-  let proposals: any[] = [];
-  if (actionMatch) {
-    try {
-      proposals = JSON.parse(actionMatch[1].trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
-    } catch {
-      proposals = [];
-    }
-  }
-  const additions = actions
-    .filter(action => !existingTitles.some(task => areTaskTextsSimilar(action.title, task) || areTaskTextsSimilar(action.notes, task)) && !proposals.some(proposal => proposal?.type === 'task' && (areTaskTextsSimilar(action.title, proposal.details?.title || proposal.title || '') || areTaskTextsSimilar(action.notes, proposal.details?.title || proposal.title || ''))))
-    .map((action, index) => ({
-      id: `meeting-protocol-${index + 1}`,
-      type: 'task',
-      title: action.title,
-      details: { title: action.title, notes: action.notes, dueDate },
-    }));
-  if (additions.length === 0) return summary;
-  const merged = [...proposals, ...additions];
-  const serialized = `<ACTION_PROPOSALS>\n${JSON.stringify(merged, null, 2)}\n</ACTION_PROPOSALS>`;
-  return actionMatch ? summary.replace(actionMatch[0], serialized) : `${summary.trim()}\n\n${serialized}`;
-}
-
-export function ensureActionSectionTasks(summary: string, tasksContext: string, fallbackDueDate: string): string {
-  const taskStates = extractGoogleTaskStates(tasksContext);
-  const actionMatch = summary.match(/<ACTION_PROPOSALS>([\s\S]*?)<\/ACTION_PROPOSALS>/i);
-  let proposals: any[] = [];
-  if (actionMatch) {
-    try {
-      proposals = JSON.parse(actionMatch[1].trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim());
-    } catch {
-      proposals = [];
-    }
-  }
-
-  const additions: any[] = [];
-  const addAction = (title: string, details: string) => {
-    const cleanedTitle = title.replace(/\s+/g, ' ').trim().replace(/[.;]+$/, '');
-    if (!cleanedTitle || cleanedTitle.length < 12 || /keine (gesonderte|separate)|bereits (vorbereitet|geklärt)|nur im termin|keine offenen/i.test(cleanedTitle)) return;
-    const alreadyRepresented = [...taskStates.open, ...taskStates.completed].some(task => areTaskTextsSimilar(cleanedTitle, task)) ||
-      proposals.some(proposal => proposal?.type === 'task' && areTaskTextsSimilar(cleanedTitle, proposal.details?.title || proposal.title || '')) ||
-      additions.some(proposal => areTaskTextsSimilar(cleanedTitle, proposal.details?.title || proposal.title || ''));
-    if (alreadyRepresented) return;
-    additions.push({
-      id: `section-task-${additions.length + 1}`,
-      type: 'task',
-      title: cleanedTitle,
-      details: { title: cleanedTitle, notes: details.trim() || `Konkrete Aktion aus dem Daily: ${cleanedTitle}`, dueDate: fallbackDueDate },
-    });
-  };
-
-  for (const sectionMatch of summary.matchAll(/^## [^\n]+[\s\S]*?(?=^## |$)/gm)) {
-    const section = sectionMatch[0];
-    for (const actionMatch of section.matchAll(/(?:Vorbereitungs-Status(?:\s*&\s*To-Dos)?|Vorbereitungsbedarf|Offene Entscheidung|Nächste Schritte):\s*([^\n]+)/gi)) {
-      const detail = actionMatch[1].trim();
-      if (/\b(muss|soll|prüf|kl[äa]r|vorbereit|abstimm|nachfass|kontakt|einrichten|final|sicherstellen|übermitteln|erstellen|durchführen|einholen|anfordern|prüfen|bearbeiten|planen|terminieren|festlegen|freigeben|nachhalten)\b/i.test(detail)) {
-        addAction(detail, `Konkrete Aktion aus dem Bericht: ${detail}`);
-      }
-    }
-  }
-
-  for (const sectionTitle of ['## 5. 🚨 Dringende Klärungen & Projekt-To-dos', '## 6. 💡 Weitere nächste Schritte']) {
-    const sectionStart = summary.indexOf(sectionTitle);
-    if (sectionStart < 0) continue;
-    const nextSection = summary.indexOf('\n## ', sectionStart + sectionTitle.length);
-    const actionBlock = summary.indexOf('\n<ACTION_PROPOSALS>', sectionStart);
-    const sectionEnd = [nextSection, actionBlock].filter(index => index >= 0).sort((a, b) => a - b)[0] || summary.length;
-    const section = summary.slice(sectionStart, sectionEnd);
-    const itemPattern = /^- \*\*(.+?)\*\*(?:\s+—\s+Fälligkeit:\s+(\d{4}-\d{2}-\d{2}))?[\s\S]*?(?=\n- \*\*|$)/gm;
-    for (const match of section.matchAll(itemPattern)) {
-      const title = match[1].trim();
-      if (!title || /^(Weitere nächste Schritte|Dringende Klärungen)/i.test(title)) continue;
-      const dueDate = match[2] || fallbackDueDate;
-      const details = match[0].replace(/^- \*\*.+?\*\*/, '').replace(/—\s+Fälligkeit:\s+\d{4}-\d{2}-\d{2}/, '').replace(/\s+/g, ' ').trim();
-      addAction(title, details || `Konkrete Aktion aus dem Daily-Abschnitt: ${title}`);
-    }
-  }
-
-  if (additions.length === 0) return summary;
-  const merged = [...proposals, ...additions];
-  const serialized = `<ACTION_PROPOSALS>\n${JSON.stringify(merged, null, 2)}\n</ACTION_PROPOSALS>`;
-  return actionMatch ? summary.replace(actionMatch[0], serialized) : `${summary.trim()}\n\n${serialized}`;
-}
 
 function convertMarkdownTablesToCleanText(text: string): string {
   if (!text) return "";
@@ -2092,14 +1709,25 @@ app.post('/api/actions/drive', async (req, res) => {
     const fieldError = validateTextField(fileName, 'Dateiname', 255, true) || validateTextField(content, 'Dokumentinhalt', 1000000, true);
     if (fieldError) return res.status(400).json({ error: fieldError });
 
-    const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
+    const fileMetadata: any = { name: fileName, mimeType: 'text/markdown' };
+    if (driveFolderId) fileMetadata.parents = [driveFolderId];
     const media = { mimeType: 'text/markdown', body: content };
 
-    const fileRes = await drive.files.create({
-      requestBody: fileMetadata,
-      media: media,
-      fields: 'id, name, webViewLink'
-    });
+    let fileRes: any;
+    try {
+      fileRes = await drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id, name, webViewLink'
+      });
+    } catch (createErr: any) {
+      delete fileMetadata.parents;
+      fileRes = await drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id, name, webViewLink'
+      });
+    }
 
     res.json({
       success: true,
@@ -2252,7 +1880,7 @@ app.post('/api/agent/chat', async (req, res) => {
       todayCanonicalBriefing = `\n--- HEUTIGES KANONISCHES MANAGEMENT-BRIEFING (${dateStr}) ---\n${existingCron.summary}\n`;
     }
 
-    const systemPrompt = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (Squad Lead DATA / AI Consultant bei PCG). Deine Aufgabe ist die autonome, strukturierte und regelmäßige Pflege und Aktualisierung seines lokalen Memory-Systems (agent-memory/).
+    const systemPrompt = `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde). Deine Aufgabe ist die autonome, strukturierte und regelmäßige Pflege und Aktualisierung seines lokalen Memory-Systems (agent-memory/).
 Dein Ziel ist es, den operativen Overhead für Hardy zu minimieren, indem du Rohdaten strukturierst, Risiken triagierst, ein proaktives Update-Interview führst und Management-reife Briefings vorbereitest. Du bist nicht für die Umsetzung von technischen Anforderungen von Kunden verantwortlich, 
 möchtest aber davon wissen und den Überblick behalten. Behalte die Projektmanager-Übersicht. Trage To-Dos ein zum Nachhaken, Klären oder Vorbereiten, wenn Deadlines oder Aufgaben irgendwo auftauchen. 
 
@@ -2283,8 +1911,8 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
    - Wenn heute Freitag ist (oder vor dem Wochenende): Blicke explizit vorausschauend auf MONTAG und die kommende Arbeitswoche!
    - Welche Termine stehen am Montag an? Welche Kunden-Vorbereitungen, Deadlines und To-Dos müssen für den Wochenstart bereits HEUTE im Blick behalten und vorbereitet werden?
 
-5. 🚫 INTERNE TERMINE SILENT IGNORIEREN (Thursdays for Data):
-   - "Thursdays for Data" ist ein interner PCG-Serientermin und MUSS IMMER KOMPLETT SILENT IGNORIERT WERDEN! Keine Erwähnung, keine To-Dos, keine Vorbereitung und NIEMALS ein Abschnitt "Ignorierte interne Termine".
+5. 🚫 INTERNE TERMINE & COACHING SILENT IGNORIEREN:
+   - "Thursdays for Data" sowie private Coaching-/Mentoring-Themen (inkl. Coaching J., Schwingdings) MÜSSEN IMMER KOMPLETT SILENT IGNORIERT WERDEN! Keine Erwähnung, keine To-Dos, keine Vorbereitung und NIEMALS ein Abschnitt "Ignorierte interne Termine".
 
 6. 🔒 MANDATORISCHE VORHERIGE AKTUALITÄTSPRÜFUNG & FILTERUNG ALTER THEMEN:
    - STRIKTE AKTUALITÄTS-REGEL: Überprüfe JEDES Thema, Projekt und To-Do VOR der Anzeige auf Aktualität und Relevanz!
@@ -2327,12 +1955,12 @@ WICHTIGE FOKUS- & BRIEFING-REGELN:
       ## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen
       - **<Projekt / Person / Planung>**
         • **Änderung:** <Was ist neu oder anders>
-        • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Squad>
+        • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Organisation>
         • [Quelle: <Name>](<URL>)
       ---
-      ## 2. Squad Lead Control
-      - **Allocation / Billability / Booking / Projektplanung / David Weekly**
-        • <Aktueller Stand und offene Entscheidung>
+      ## 2. Ortsbeirat & Kommunales (Glietz / Märkische Heide)
+      - **Dorfbudget / Fördermittel / Bürgeranliegen / Projekte / Beschlüsse**
+        • <Aktueller Stand, Mittelverwendung, Fristen oder offene Vorhaben für Glietz & Märkische Heide>
         • [Quelle: <Name>](<URL>)
       ---
       ## 3. 🚨 Proaktive Kunden- & Meeting-Vorbereitung (Heute, Morgen & Montag)
@@ -2448,7 +2076,7 @@ app.post('/api/transcribe', async (req, res) => {
   }
 });
 
-export async function performDailyUpdate(accessToken: string, forceRefresh: boolean = false, options: { autoCreateTasks?: boolean } = { autoCreateTasks: true }) {
+export async function performDailyUpdate(accessToken: string, forceRefresh: boolean = false, options: { autoCreateTasks?: boolean } = {}) {
   const oauth2Client = getOAuth2Client(accessToken);
 
   // Validate base token first
@@ -2509,8 +2137,6 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     : '';
   const davidAgendaContext = extractDavidOneOnOneAgenda(tasksContext);
   const localMemoryContext = loadLocalMemoryContext();
-  const sourceDigest = dailySourceDigest({ drive: driveContext, emails: emailsContext, events: eventsContext, chats: chatsContext, tasks: tasksContext });
-  const sourceChanged = hasDailySourceChanged(sourceDigest);
   const currentSquadSignals = extractCurrentSquadSignals(enrichedDriveContext, chatsContext);
   const projectCapacityEvidence = extractProjectCapacityEvidence(enrichedDriveContext, emailsContext, chatsContext);
   const skillContext = loadSkillContext([
@@ -2519,16 +2145,11 @@ export async function performDailyUpdate(accessToken: string, forceRefresh: bool
     'david-one-on-one-preparation',
     'daily-management-briefing',
     'project-and-customer-status',
-    'squad-lead-operations',
+    'ortsbeirat-operations',
+    'brg-erzmarschall-operations',
   ]);
 
   const nowStr = new Date().toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' });
-  const evidenceKeywords = ['projekt', 'budget', 'scope', 'sow', 'staffing', 'kapaz', 'offen', 'entscheidung', 'heads up', 'änderung'];
-  const compactEvidencePacket = buildEvidencePacket([
-    { name: 'Google Drive', context: enrichedDriveContext, budget: 36000, keywords: evidenceKeywords },
-    { name: 'E-Mail', context: emailsContext, budget: 18000, keywords: [...evidenceKeywords, 'zugewiesen', 'allocated'] },
-    { name: 'Google Chat', context: chatsContext, budget: 18000, keywords: [...evidenceKeywords, 'feedback', 'agenda', 'biweekly'] },
-  ]);
 
   const prompt = `Erstelle ein fokussiertes, tägliches Management-Briefing und Update basierend auf allen verknüpften Quellen (Google Drive Dokumente & Meeting-Protokolle, E-Mails, Kalender, Google Chat und Google Tasks).
 
@@ -2550,7 +2171,7 @@ ${skillContext}
  ## 1. [ÄNDERUNG] Projekt- und Kapazitätsänderungen
  - **<Projekt / Person / Planung>**
    • **Änderung:** <Was ist neu oder anders>
-   • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Squad>
+   • **Auswirkung:** <Konsequenz für Projekt, Kapazität oder Organisation>
    • [Quelle: <Name>](<URL>)
 
  ---
@@ -2592,10 +2213,22 @@ ${skillContext}
   • [Quelle: <Name>](<URL>)
 
 --- GOOGLE DRIVE (MEETING NOTES & DOKUMENTE) ---
-  ${compactEvidencePacket}
+${enrichedDriveContext}
+
+--- E-MAILS ---
+${emailsContext}
 
 --- KALENDER ---
 ${eventsContext}
+
+--- CHATS & GOOGLE CHAT ---
+${chatsContext}
+
+--- TELEGRAM (BRG INFO & GILDENKANÄLE) ---
+${telegramContext}
+
+--- WHATSAPP (GRUPPEN & CHATS) ---
+${whatsAppContext}
 
 --- AKTUELLE SQUAD-SIGNALE AUS DATIERTEN QUELLEN ---
 ${currentSquadSignals}
@@ -2616,7 +2249,7 @@ ${localMemoryContext}
     contents: prompt,
     config: {
       temperature: 0.0,
-      systemInstruction: `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (Squad Lead DATA / AI Consultant bei PCG). Erstelle ein klares, management-taugliches Briefing auf Deutsch.
+      systemInstruction: `Du bist der PCG Agent Memory Manager, der persönliche KI-Assistent von Hardy Engwer (IT / KI Consultant, Ortsvorsteher in Glietz, Autor von 'Mika und Spiegeling' und Erzmarschall der Berliner Rittergilde). Erstelle ein klares, management-taugliches Briefing auf Deutsch.
 
 MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
 1. KEINE TABELLEN: Verwende NIEMALS Markdown-Tabellen. Stelle alle Status-Übersichten in klaren Text-Absätzen und Aufzählungslisten (Bullet Points) dar.
@@ -2641,7 +2274,7 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
  10b. HR-THEMA STATT PROJEKT: Personal- und Compliance-Themen (z. B. WorkFlex, Workation, Auslandsaufenthalt, Steuerklärungen) sind keine Projekte. Daraus darf kein Projektstatus, keine Projektallokation und kein Projekt abgeleitet werden.
 10. Querabgleich mit Terminen: Wenn heute ein Meeting (z. B. 1:1 mit Teammitgliedern) ansteht, nimm besprechbare Punkte als Meeting-Agendapunkte auf – erstelle aber To-Dos für echte Vorbereitungsaufgaben und vergangene Action Items!
 11. Abgeschlossene Aufgaben: Alle mit [ERLEDIGT] markierten oder im lokalen Memory explizit abgeschlossenen Einzelaufgaben dürfen nie erneut vorgeschlagen werden. Projekte nicht pauschal abschliessen; offene Google Tasks desselben Projekts bleiben gültig.
-12. Ignorierte Termine: "Thursdays for Data" ist intern und wird immer still ignoriert. KEINEN Abschnitt "Ignorierte interne Termine" erstellen!
+12. Ignorierte Termine: "Thursdays for Data" sowie privates Coaching/Mentoring (inkl. Coaching J., Schwingdings) sind komplett intern/privat und werden immer stillschweigend ignoriert. KEINEN Abschnitt "Ignorierte interne Termine" erstellen und NIEMALS in To-Dos oder Projektstatus aufnehmen!
 13. Projekt-Fakten & Schreibweisen:
     - Projekt-, Kunden- und Personennamen exakt so schreiben, wie sie in der jeweils aktuellsten datierten Quelle stehen. Keine Schreibweisen aus dem Code oder aus alten Notizen übernehmen.
     - Interne Abstimmungen zu offenen Budgetfragen transparent im Projektstatus erwähnen, sofern eine aktuelle Quelle sie belegt.
@@ -2660,27 +2293,39 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
     sanitizeActionProposals(response.text || "Kein Update generiert.", tasksContext, eventsContext),
     currentSquadSignals,
   ));
+  summary = ensureCriticalProjectTasks(
+    summary,
+    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}\n${whatsAppContext}`,
+    tasksContext,
+    dateStr,
+  );
   summary = ensureMeetingProtocolTasks(
     summary,
-    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}`,
+    `${enrichedDriveContext}\n${emailsContext}\n${chatsContext}\n${telegramContext}\n${whatsAppContext}`,
     tasksContext,
     dateStr,
   );
   summary = ensureActionSectionTasks(summary, tasksContext, dateStr);
-  // Odoo-/Jira-Abgleich und Confluence-Veröffentlichung sind entfernt.
+  if (telegramWarningBlock) {
+    summary = telegramWarningBlock + summary;
+  }
+  if (whatsAppWarningBlock) {
+    summary = whatsAppWarningBlock + summary;
+  }
 
   try {
     // Keep structured memory current on every daily run; operators can disable
     // the AI curation explicitly for maintenance windows.
-    if (process.env.ENABLE_DAILY_MEMORY_CURATION !== 'false' && (sourceChanged || process.env.FORCE_DAILY_MEMORY_CURATION === 'true')) {
-      const generatedMemoryFiles = await Promise.race([
-        generateStructuredMemoryConcepts({ driveContext, emailsContext, eventsContext, chatsContext, tasksContext, localMemoryContext }),
-        new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('Memory-Kuration Timeout nach 300000ms')), 300000)),
-      ]);
+    if (process.env.ENABLE_DAILY_MEMORY_CURATION !== 'false') {
+      const generatedMemoryFiles = await generateStructuredMemoryConcepts({
+        driveContext,
+        emailsContext,
+        eventsContext,
+        chatsContext,
+        tasksContext,
+        localMemoryContext,
+      });
       console.log(`[Memory Curation] ${generatedMemoryFiles.length} OKF-Konzept(e) aktualisiert.`);
-      saveDailySourceDigest(sourceDigest);
-    } else if (process.env.ENABLE_DAILY_MEMORY_CURATION !== 'false') {
-      console.log('[Memory Curation] Übersprungen: unveränderter Quellenstand seit letzter Kuration.');
     } else {
       console.log('[Memory Curation] Im Daily standardmäßig übersprungen; Memory-Sync bleibt aktiv.');
     }
@@ -2714,7 +2359,7 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
             if (!tp.details?.dueDate) {
               console.warn(`[Task Due Date] Kein dueDate für "${title}"; verwende ${dateStr}.`);
             }
-            const r = await createGoogleTaskDirect(title, notes, dueDate, accessToken);
+            const r = await createTaskWithFallback(title, notes, dueDate, accessToken);
             createdTasks.push({ title, id: r.id });
             createdTitles.push(title);
             console.log(`Google Task angelegt: ${title} (ID: ${r.id})`);
@@ -2734,19 +2379,27 @@ MANDATORISCHE FORMATIERUNGS- & INHALTS-REGELN:
   try {
     const drive = await getDriveClient(accessToken);
     const fileName = `Daily_Update_${dateStr}.md`;
-    
-    const res = await drive.files.list({
-      q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
-      fields: 'files(id)'
-    });
-    const files = res.data.files || [];
-    
-    const fileMetadata = { name: fileName, parents: [driveFolderId], mimeType: 'text/markdown' };
     const media = { mimeType: 'text/markdown', body: summary };
-    
+
+    let files: any[] = [];
+    let targetParents: string[] | undefined = undefined;
+
+    try {
+      const res = await drive.files.list({
+        q: `'${driveFolderId}' in parents and name='${fileName}' and trashed=false`,
+        fields: 'files(id)'
+      });
+      files = res.data.files || [];
+      targetParents = [driveFolderId];
+    } catch (folderErr: any) {
+      console.warn(`[Daily Briefing Drive] Ordner "${driveFolderId}" nicht erreichbar (${folderErr?.message || folderErr}). Speichere Briefing im Drive Root.`);
+    }
+
     if (files.length > 0) {
       await drive.files.update({ fileId: files[0].id, media: media });
     } else {
+      const fileMetadata: any = { name: fileName, mimeType: 'text/markdown' };
+      if (targetParents) fileMetadata.parents = targetParents;
       await drive.files.create({ requestBody: fileMetadata, media: media });
     }
   } catch (driveErr: any) {
@@ -3124,36 +2777,6 @@ app.post('/api/cron/trigger', async (req, res) => {
   }
 });
 
-async function postDailyAgentSuggestions(accessToken: string, summary: string, dateStr: string): Promise<void> {
-  if (!process.env.CHAT_SPACE_ID) return;
-  try {
-    const oauth2Client = getOAuth2Client(accessToken);
-    const tasksContext = await fetchTasks(oauth2Client);
-    const response = await generateAIContent({
-      contents: `Erstelle konkrete Agenten-Vorschläge für die offenen Google Tasks aus diesem Daily. Nutze nur Tasks, die im Kontext stehen. Gib höchstens 5 kurze Zeilen im Format "- **Tasktitel**: konkrete Unterstützung durch den Agenten" zurück. Wenn keine sinnvollen Vorschläge möglich sind, gib exakt "KEINE" zurück.\n\nOFFENE TASKS:\n${tasksContext.slice(0, 16000)}\n\nDAILY-AUSZUG:\n${cleanContentForEmail(summary).slice(0, 24000)}`,
-      config: {
-        temperature: 0.0,
-        systemInstruction: 'Du formulierst ausschließlich konkrete, taskbezogene Agenten-Unterstützung auf Deutsch. Keine allgemeinen Zusammenfassungen, keine erfundenen Tasks und keine automatische Ausführung.',
-      },
-    });
-    const suggestions = (response.text || '').trim();
-    const lines = suggestions === 'KEINE' ? [] : suggestions.split(/\r?\n/).map(line => line.trim()).filter(line => /^- \*\*.+\*\*:\s*.+/.test(line)).slice(0, 5);
-    const structuredSuggestions = lines.map(line => {
-      const match = line.match(/^- \*\*(.+?)\*\*:\s*(.*)$/s);
-      return match ? { taskTitle: match[1], suggestion: match[2] } : { taskTitle: 'Daily-Task', suggestion: line };
-    });
-    fs.writeFileSync(CHAT_PENDING_PROPOSALS_FILE, JSON.stringify({ updatedAt: new Date().toISOString(), suggestions: structuredSuggestions }, null, 2), 'utf8');
-    const chat = google.chat({ version: 'v1', auth: oauth2Client });
-    const chatText = lines.length > 0
-      ? `${CHAT_MARKER} Agenten-Vorschläge zur Bearbeitung neuer Tasks (${dateStr})\n\n${lines.join('\n')}\n\nDer vollständige Daily steht per E-Mail und Drive zur Verfügung.`
-      : `${CHAT_MARKER} Keine neuen Task-Agenten-Vorschläge für den Daily ${dateStr}. Der vollständige Daily steht per E-Mail und Drive zur Verfügung.`;
-    await chat.spaces.messages.create({ parent: process.env.CHAT_SPACE_ID, requestBody: { text: chatText } });
-    console.log(`[Chat] Daily-Agenten-Vorschläge gepostet (${lines.length}).`);
-  } catch (error: any) {
-    console.warn('[Chat] Daily-Agenten-Vorschläge konnten nicht gepostet werden:', error?.message || error);
-  }
-}
-
 // An Werktagen (Montag bis Freitag) um 8:00 Uhr laufen lassen (Europe/Berlin Zeit) mit automatischem Refresh-Token
 if (isMain) {
 cron.schedule('0 8 * * 1-5', async () => {
@@ -3170,9 +2793,7 @@ cron.schedule('0 8 * * 1-5', async () => {
   }
   console.log("Running daily automated update at 08:00 (Mon-Fri)...");
   try {
-    const result = await performDailyUpdate(token);
-    console.log(`[Email] Daily-E-Mail ${result.emailSent ? 'gesendet' : 'nicht gesendet'}${result.emailErrorMsg ? `: ${result.emailErrorMsg}` : ''}`);
-    await postDailyAgentSuggestions(token, result.summary, result.dateStr);
+    await performDailyUpdate(token);
     console.log("Daily update completed successfully.");
   } catch (err: any) {
     if (isAuthError(err)) {
